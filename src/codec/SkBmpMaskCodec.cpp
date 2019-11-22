@@ -5,20 +5,20 @@
  * found in the LICENSE file.
  */
 
-#include "SkBmpMaskCodec.h"
-#include "SkCodecPriv.h"
-#include "SkColorPriv.h"
+#include "include/private/SkColorData.h"
+#include "src/codec/SkBmpMaskCodec.h"
+#include "src/codec/SkCodecPriv.h"
 
 /*
  * Creates an instance of the decoder
  */
-SkBmpMaskCodec::SkBmpMaskCodec(int width, int height, const SkEncodedInfo& info, SkStream* stream,
+SkBmpMaskCodec::SkBmpMaskCodec(SkEncodedInfo&& info,
+                               std::unique_ptr<SkStream> stream,
                                uint16_t bitsPerPixel, SkMasks* masks,
                                SkCodec::SkScanlineOrder rowOrder)
-    : INHERITED(width, height, info, stream, bitsPerPixel, rowOrder)
+    : INHERITED(std::move(info), std::move(stream), bitsPerPixel, rowOrder)
     , fMasks(masks)
     , fMaskSwizzler(nullptr)
-    , fSrcBuffer(new uint8_t [this->srcRowBytes()])
 {}
 
 /*
@@ -27,19 +27,17 @@ SkBmpMaskCodec::SkBmpMaskCodec(int width, int height, const SkEncodedInfo& info,
 SkCodec::Result SkBmpMaskCodec::onGetPixels(const SkImageInfo& dstInfo,
                                             void* dst, size_t dstRowBytes,
                                             const Options& opts,
-                                            SkPMColor* inputColorPtr,
-                                            int* inputColorCount,
                                             int* rowsDecoded) {
     if (opts.fSubset) {
         // Subsets are not supported.
         return kUnimplemented;
     }
-    if (dstInfo.dimensions() != this->getInfo().dimensions()) {
+    if (dstInfo.dimensions() != this->dimensions()) {
         SkCodecPrintf("Error: scaling not supported.\n");
         return kInvalidScale;
     }
 
-    Result result = this->prepareToDecode(dstInfo, opts, inputColorPtr, inputColorCount);
+    Result result = this->prepareToDecode(dstInfo, opts);
     if (kSuccess != result) {
         return result;
     }
@@ -53,7 +51,7 @@ SkCodec::Result SkBmpMaskCodec::onGetPixels(const SkImageInfo& dstInfo,
 }
 
 SkCodec::Result SkBmpMaskCodec::onPrepareToDecode(const SkImageInfo& dstInfo,
-        const SkCodec::Options& options, SkPMColor inputColorPtr[], int* inputColorCount) {
+        const SkCodec::Options& options) {
     if (this->colorXform()) {
         this->resetXformBuffer(dstInfo.width());
     }
@@ -66,8 +64,8 @@ SkCodec::Result SkBmpMaskCodec::onPrepareToDecode(const SkImageInfo& dstInfo,
         }
     }
 
-    // Initialize the mask swizzler
-    fMaskSwizzler.reset(SkMaskSwizzler::CreateMaskSwizzler(swizzlerInfo, this->getInfo(),
+    bool srcIsOpaque = this->getEncodedInfo().opaque();
+    fMaskSwizzler.reset(SkMaskSwizzler::CreateMaskSwizzler(swizzlerInfo, srcIsOpaque,
             fMasks.get(), this->bitsPerPixel(), options));
     SkASSERT(fMaskSwizzler);
 
@@ -81,7 +79,7 @@ int SkBmpMaskCodec::decodeRows(const SkImageInfo& dstInfo,
                                            void* dst, size_t dstRowBytes,
                                            const Options& opts) {
     // Iterate over rows of the image
-    uint8_t* srcRow = fSrcBuffer.get();
+    uint8_t* srcRow = this->srcBuffer();
     const int height = dstInfo.height();
     for (int y = 0; y < height; y++) {
         // Read a row of the input
@@ -95,9 +93,8 @@ int SkBmpMaskCodec::decodeRows(const SkImageInfo& dstInfo,
         void* dstRow = SkTAddOffset<void>(dst, row * dstRowBytes);
 
         if (this->colorXform()) {
-            SkImageInfo xformInfo = dstInfo.makeWH(fMaskSwizzler->swizzleWidth(), dstInfo.height());
             fMaskSwizzler->swizzle(this->xformBuffer(), srcRow);
-            this->applyColorXform(xformInfo, dstRow, this->xformBuffer());
+            this->applyColorXform(dstRow, this->xformBuffer(), fMaskSwizzler->swizzleWidth());
         } else {
             fMaskSwizzler->swizzle(dstRow, srcRow);
         }

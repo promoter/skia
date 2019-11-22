@@ -7,27 +7,28 @@
 
 
 DEPS = [
-  'build/file',
+  'recipe_engine/context',
+  'recipe_engine/file',
   'recipe_engine/path',
   'recipe_engine/properties',
   'recipe_engine/step',
   'recipe_engine/time',
+  'vars',
 ]
 
 
 def RunSteps(api):
-  # Upload the nanobench resuls.
-  builder_name = api.properties['buildername']
+  # Upload the nanobench results.
+  api.vars.setup()
 
   now = api.time.utcnow()
-  src_path = api.path['start_dir'].join(
-      'perfdata', builder_name, 'data')
-  with api.step.context({'cwd': src_path}):
-    results = api.file.glob(
+  src_path = api.path['start_dir'].join('perf')
+  with api.context(cwd=src_path):
+    results = api.file.glob_paths(
         'find results',
-        src_path.join('*.json'),
-        test_data=[src_path.join('nanobench_abc123.json')],
-        infra_step=True)
+        src_path,
+        '*.json',
+        test_data=['nanobench_abc123.json'])
   if len(results) != 1:  # pragma: nocover
     raise Exception('Unable to find nanobench or skpbench JSON file!')
 
@@ -36,12 +37,11 @@ def RunSteps(api):
   gs_path = '/'.join((
       'nano-json-v1', str(now.year).zfill(4),
       str(now.month).zfill(2), str(now.day).zfill(2), str(now.hour).zfill(2),
-      builder_name))
+      api.vars.builder_name))
 
-  issue = api.properties.get('patch_issue')
-  patchset = api.properties.get('patch_set')
-  if issue and patchset:
-    gs_path = '/'.join(('trybot', gs_path, str(issue), str(patchset)))
+  if api.vars.is_trybot:
+    gs_path = '/'.join(('trybot', gs_path,
+                        str(api.vars.issue), str(api.vars.patchset)))
 
   dst = '/'.join((
       'gs://%s' % api.properties['gs_bucket'], gs_path, basename))
@@ -53,7 +53,7 @@ def RunSteps(api):
 
 
 def GenTests(api):
-  builder = 'Test-Ubuntu-GCC-GCE-CPU-AVX2-x86_64-Debug'
+  builder = 'Perf-Debian9-GCC-GCE-CPU-AVX2-x86_64-All-Debug'
   yield (
     api.test('normal_bot') +
     api.properties(buildername=builder,
@@ -62,14 +62,12 @@ def GenTests(api):
                    path_config='kitchen')
   )
 
-  builder = 'Test-Ubuntu-GCC-GCE-CPU-AVX2-x86_64-Debug-Trybot'
   yield (
     api.test('trybot') +
     api.properties(buildername=builder,
                    gs_bucket='skia-perf',
                    revision='abc123',
-                   path_config='kitchen',
-                   patch_storage='gerrit') +
+                   path_config='kitchen') +
     api.properties.tryserver(
         buildername=builder,
         gerrit_project='skia',

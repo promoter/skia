@@ -7,10 +7,10 @@
 #ifndef SkOpCoincidence_DEFINED
 #define SkOpCoincidence_DEFINED
 
-#include "SkTDArray.h"
-#include "SkOpTAllocator.h"
-#include "SkOpSpan.h"
-#include "SkPathOpsTypes.h"
+#include "include/private/SkTDArray.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/pathops/SkOpSpan.h"
+#include "src/pathops/SkPathOpsTypes.h"
 
 class SkOpPtT;
 class SkOpSpanBase;
@@ -60,7 +60,7 @@ public:
     SkDEBUGCODE(SkOpGlobalState* globalState() { return fGlobalState; })
 
     void init(SkDEBUGCODE(SkOpGlobalState* globalState)) {
-        sk_bzero(this, sizeof(*this)); 
+        sk_bzero(this, sizeof(*this));
         SkDEBUGCODE(fGlobalState = globalState);
     }
 

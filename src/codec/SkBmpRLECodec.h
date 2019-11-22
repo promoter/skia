@@ -7,11 +7,11 @@
 #ifndef SkBmpRLECodec_DEFINED
 #define SkBmpRLECodec_DEFINED
 
-#include "SkBmpCodec.h"
-#include "SkColorTable.h"
-#include "SkImageInfo.h"
-#include "SkSampler.h"
-#include "SkTypes.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkTypes.h"
+#include "src/codec/SkBmpCodec.h"
+#include "src/codec/SkColorTable.h"
+#include "src/codec/SkSampler.h"
 
 /*
  * This class implements the decoding for bmp images that use an RLE encoding
@@ -22,7 +22,7 @@ public:
     /*
      * Creates an instance of the decoder
      *
-     * Called only by SkBmpCodec::NewFromStream
+     * Called only by SkBmpCodec::MakeFromStream
      * There should be no other callers despite this being public
      *
      * @param info contains properties of the encoded data
@@ -35,21 +35,22 @@ public:
      *               headers
      * @param rowOrder indicates whether rows are ordered top-down or bottom-up
      */
-    SkBmpRLECodec(int width, int height, const SkEncodedInfo& info, SkStream* stream,
+    SkBmpRLECodec(SkEncodedInfo&& info, std::unique_ptr<SkStream>,
             uint16_t bitsPerPixel, uint32_t numColors, uint32_t bytesPerColor,
             uint32_t offset, SkCodec::SkScanlineOrder rowOrder);
 
     int setSampleX(int);
 
+    int fillWidth() const;
+
 protected:
 
     Result onGetPixels(const SkImageInfo& dstInfo, void* dst,
-                       size_t dstRowBytes, const Options&, SkPMColor*,
-                       int*, int*) override;
+                       size_t dstRowBytes, const Options&,
+                       int*) override;
 
     SkCodec::Result onPrepareToDecode(const SkImageInfo& dstInfo,
-            const SkCodec::Options& options, SkPMColor inputColorPtr[],
-            int* inputColorCount) override;
+            const SkCodec::Options& options) override;
 
 private:
 
@@ -57,7 +58,7 @@ private:
      * Creates the color table
      * Sets colorCount to the new color count if it is non-nullptr
      */
-    bool createColorTable(SkColorType dstColorType, int* colorCount);
+    bool createColorTable(SkColorType dstColorType);
 
     bool initializeStreamBuffer();
 

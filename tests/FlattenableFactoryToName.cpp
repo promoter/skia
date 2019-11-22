@@ -5,10 +5,10 @@
  * found in the LICENSE file.
  */
 
-#include "SkAlphaThresholdFilter.h"
-#include "SkImage.h"
-#include "SkRegion.h"
-#include "Test.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkRegion.h"
+#include "include/effects/SkImageFilters.h"
+#include "tests/Test.h"
 
 static void test_flattenable(skiatest::Reporter* r,
                              const SkFlattenable* f,
@@ -30,13 +30,12 @@ DEF_TEST(FlattenableFactoryToName, r) {
     rects[1] = SkIRect::MakeXYWH(150, 0, 200, 500);
     SkRegion region;
     region.setRects(rects, 2);
-    sk_sp<SkImageFilter> filter(SkAlphaThresholdFilter::Make(region, 0.2f, 0.7f, nullptr));
-    test_flattenable(r, filter.get(), "SkAlphaThresholdFilter()");
+    sk_sp<SkImageFilter> filter(SkImageFilters::AlphaThreshold(region, 0.2f, 0.7f, nullptr));
+    test_flattenable(r, filter.get(), "SkImageFilters::AlphaThreshold()");
 
     SkBitmap bm;
     bm.allocN32Pixels(8, 8);
     bm.eraseColor(SK_ColorCYAN);
     sk_sp<SkImage> image(SkImage::MakeFromBitmap(bm));
-    auto shader = image->makeShader(SkShader::kClamp_TileMode, SkShader::kClamp_TileMode);
-    test_flattenable(r, shader.get(), "SkImage::newShader()");
+    test_flattenable(r, image->makeShader().get(), "SkImage::newShader()");
 }

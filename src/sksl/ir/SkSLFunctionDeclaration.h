@@ -8,12 +8,12 @@
 #ifndef SKSL_FUNCTIONDECLARATION
 #define SKSL_FUNCTIONDECLARATION
 
-#include "SkSLExpression.h"
-#include "SkSLModifiers.h"
-#include "SkSLSymbol.h"
-#include "SkSLSymbolTable.h"
-#include "SkSLType.h"
-#include "SkSLVariable.h"
+#include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLModifiers.h"
+#include "src/sksl/ir/SkSLSymbol.h"
+#include "src/sksl/ir/SkSLSymbolTable.h"
+#include "src/sksl/ir/SkSLType.h"
+#include "src/sksl/ir/SkSLVariable.h"
 
 namespace SkSL {
 
@@ -21,11 +21,12 @@ namespace SkSL {
  * A function declaration (not a definition -- does not contain a body).
  */
 struct FunctionDeclaration : public Symbol {
-    FunctionDeclaration(Position position, String name,
+    FunctionDeclaration(int offset, Modifiers modifiers, StringFragment name,
                         std::vector<const Variable*> parameters, const Type& returnType)
-    : INHERITED(position, kFunctionDeclaration_Kind, std::move(name))
+    : INHERITED(offset, kFunctionDeclaration_Kind, std::move(name))
     , fDefined(false)
     , fBuiltin(false)
+    , fModifiers(modifiers)
     , fParameters(std::move(parameters))
     , fReturnType(returnType) {}
 
@@ -70,7 +71,7 @@ struct FunctionDeclaration : public Symbol {
     bool determineFinalTypes(const std::vector<std::unique_ptr<Expression>>& arguments,
                              std::vector<const Type*>* outParameterTypes,
                              const Type** outReturnType) const {
-        assert(arguments.size() == fParameters.size());
+        SkASSERT(arguments.size() == fParameters.size());
         int genericIndex = -1;
         for (size_t i = 0; i < arguments.size(); i++) {
             if (fParameters[i]->fType.kind() == Type::kGeneric_Kind) {
@@ -92,7 +93,9 @@ struct FunctionDeclaration : public Symbol {
             }
         }
         if (fReturnType.kind() == Type::kGeneric_Kind) {
-            assert(genericIndex != -1);
+            if (genericIndex == -1) {
+                return false;
+            }
             *outReturnType = fReturnType.coercibleTypes()[genericIndex];
         } else {
             *outReturnType = &fReturnType;
@@ -102,6 +105,7 @@ struct FunctionDeclaration : public Symbol {
 
     mutable bool fDefined;
     bool fBuiltin;
+    Modifiers fModifiers;
     const std::vector<const Variable*> fParameters;
     const Type& fReturnType;
 

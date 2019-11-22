@@ -5,9 +5,10 @@
  * found in the LICENSE file.
  */
 
-#include "SkCanvas.h"
-#include "SkHighContrastFilter.h"
-#include "Test.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/effects/SkHighContrastFilter.h"
+#include "tests/Test.h"
 
 DEF_TEST(HighContrastFilter_FilterImage, reporter) {
     SkHighContrastConfig config;
@@ -33,8 +34,6 @@ DEF_TEST(HighContrastFilter_FilterImage, reporter) {
     paint.setColorFilter(SkHighContrastFilter::Make(config));
     canvasFilter.drawRect(r, paint);
 
-    paintResult.lockPixels();
-    filterResult.lockPixels();
     for (int y = r.top(); y < r.bottom(); ++y) {
         for (int x = r.left(); x < r.right(); ++x) {
             SkColor paintColor = paintResult.getColor(x, y);
@@ -44,8 +43,6 @@ DEF_TEST(HighContrastFilter_FilterImage, reporter) {
                 paint.getColorFilter()->filterColor(paintColor));
         }
     }
-    paintResult.unlockPixels();
-    filterResult.unlockPixels();
 }
 
 DEF_TEST(HighContrastFilter_SanityCheck, reporter) {

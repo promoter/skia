@@ -5,16 +5,15 @@
  * found in the LICENSE file.
  */
 
-#include "SkArenaAlloc.h"
-#include "SkMatrix.h"
-#include "SkOpEdgeBuilder.h"
-#include "SkPathPriv.h"
-#include "SkPathOps.h"
-#include "SkPathOpsCommon.h"
+#include "include/core/SkMatrix.h"
+#include "include/pathops/SkPathOps.h"
+#include "src/core/SkArenaAlloc.h"
+#include "src/core/SkPathPriv.h"
+#include "src/pathops/SkOpEdgeBuilder.h"
+#include "src/pathops/SkPathOpsCommon.h"
 
 static bool one_contour(const SkPath& path) {
-    char storage[256];
-    SkArenaAlloc allocator(storage);
+    SkSTArenaAlloc<256> allocator;
     int verbCount = path.countVerbs();
     uint8_t* verbs = (uint8_t*) allocator.makeArrayDefault<uint8_t>(verbCount);
     (void) path.getVerbs(verbs, verbCount);
@@ -51,8 +50,7 @@ bool SkOpBuilder::FixWinding(SkPath* path) {
         path->setFillType(fillType);
         return true;
     }
-    char storage[4096];
-    SkArenaAlloc allocator(storage);
+    SkSTArenaAlloc<4096> allocator;
     SkOpContourHead contourHead;
     SkOpGlobalState globalState(&contourHead, &allocator  SkDEBUGPARAMS(false)
             SkDEBUGPARAMS(nullptr));

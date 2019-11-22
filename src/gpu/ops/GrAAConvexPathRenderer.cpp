@@ -5,29 +5,29 @@
  * found in the LICENSE file.
  */
 
-#include "GrAAConvexPathRenderer.h"
-
-#include "GrAAConvexTessellator.h"
-#include "GrCaps.h"
-#include "GrContext.h"
-#include "GrDefaultGeoProcFactory.h"
-#include "GrDrawOpTest.h"
-#include "GrGeometryProcessor.h"
-#include "GrOpFlushState.h"
-#include "GrPathUtils.h"
-#include "GrPipelineBuilder.h"
-#include "GrProcessor.h"
-#include "SkGeometry.h"
-#include "SkPathPriv.h"
-#include "SkString.h"
-#include "SkTraceEvent.h"
-#include "glsl/GrGLSLFragmentShaderBuilder.h"
-#include "glsl/GrGLSLGeometryProcessor.h"
-#include "glsl/GrGLSLProgramDataManager.h"
-#include "glsl/GrGLSLUniformHandler.h"
-#include "glsl/GrGLSLVarying.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
-#include "ops/GrMeshDrawOp.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypes.h"
+#include "src/core/SkGeometry.h"
+#include "src/core/SkPathPriv.h"
+#include "src/core/SkPointPriv.h"
+#include "src/gpu/GrAuditTrail.h"
+#include "src/gpu/GrCaps.h"
+#include "src/gpu/GrDrawOpTest.h"
+#include "src/gpu/GrGeometryProcessor.h"
+#include "src/gpu/GrProcessor.h"
+#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrVertexWriter.h"
+#include "src/gpu/geometry/GrPathUtils.h"
+#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
+#include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
+#include "src/gpu/glsl/GrGLSLProgramDataManager.h"
+#include "src/gpu/glsl/GrGLSLUniformHandler.h"
+#include "src/gpu/glsl/GrGLSLVarying.h"
+#include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
+#include "src/gpu/ops/GrAAConvexPathRenderer.h"
+#include "src/gpu/ops/GrMeshDrawOp.h"
+#include "src/gpu/ops/GrSimpleMeshDrawOpHelper.h"
 
 GrAAConvexPathRenderer::GrAAConvexPathRenderer() {
 }
@@ -63,7 +63,7 @@ struct Segment {
 
 typedef SkTArray<Segment, true> SegmentArray;
 
-static void center_of_mass(const SegmentArray& segments, SkPoint* c) {
+static bool center_of_mass(const SegmentArray& segments, SkPoint* c) {
     SkScalar area = 0;
     SkPoint center = {0, 0};
     int count = segments.count();
@@ -110,27 +110,29 @@ static void center_of_mass(const SegmentArray& segments, SkPoint* c) {
         // undo the translate of p0 to the origin.
         *c = center + p0;
     }
-    SkASSERT(!SkScalarIsNaN(c->fX) && !SkScalarIsNaN(c->fY));
+    return !SkScalarIsNaN(c->fX) && !SkScalarIsNaN(c->fY) && c->isFinite();
 }
 
-static void compute_vectors(SegmentArray* segments,
+static bool compute_vectors(SegmentArray* segments,
                             SkPoint* fanPt,
                             SkPathPriv::FirstDirection dir,
                             int* vCount,
                             int* iCount) {
-    center_of_mass(*segments, fanPt);
+    if (!center_of_mass(*segments, fanPt)) {
+        return false;
+    }
     int count = segments->count();
 
     // Make the normals point towards the outside
-    SkPoint::Side normSide;
+    SkPointPriv::Side normSide;
     if (dir == SkPathPriv::kCCW_FirstDirection) {
-        normSide = SkPoint::kRight_Side;
+        normSide = SkPointPriv::kRight_Side;
     } else {
-        normSide = SkPoint::kLeft_Side;
+        normSide = SkPointPriv::kLeft_Side;
     }
 
-    *vCount = 0;
-    *iCount = 0;
+    int64_t vCount64 = 0;
+    int64_t iCount64 = 0;
     // compute normals at all points
     for (int a = 0; a < count; ++a) {
         Segment& sega = (*segments)[a];
@@ -142,15 +144,15 @@ static void compute_vectors(SegmentArray* segments,
         for (int p = 0; p < n; ++p) {
             segb.fNorms[p] = segb.fPts[p] - *prevPt;
             segb.fNorms[p].normalize();
-            segb.fNorms[p].setOrthog(segb.fNorms[p], normSide);
+            segb.fNorms[p] = SkPointPriv::MakeOrthog(segb.fNorms[p], normSide);
             prevPt = &segb.fPts[p];
         }
         if (Segment::kLine == segb.fType) {
-            *vCount += 5;
-            *iCount += 9;
+            vCount64 += 5;
+            iCount64 += 9;
         } else {
-            *vCount += 6;
-            *iCount += 12;
+            vCount64 += 6;
+            iCount64 += 12;
         }
     }
 
@@ -163,9 +165,15 @@ static void compute_vectors(SegmentArray* segments,
         segb.fMid = segb.fNorms[0] + sega.endNorm();
         segb.fMid.normalize();
         // corner wedges
-        *vCount += 4;
-        *iCount += 6;
+        vCount64 += 4;
+        iCount64 += 6;
     }
+    if (vCount64 > SK_MaxS32 || iCount64 > SK_MaxS32) {
+        return false;
+    }
+    *vCount = vCount64;
+    *iCount = iCount64;
+    return true;
 }
 
 struct DegenerateTestData {
@@ -192,10 +200,10 @@ static void update_degenerate_test(DegenerateTestData* data, const SkPoint& pt) 
             data->fStage = DegenerateTestData::kPoint;
             break;
         case DegenerateTestData::kPoint:
-            if (pt.distanceToSqd(data->fFirstPoint) > kCloseSqd) {
+            if (SkPointPriv::DistanceToSqd(pt, data->fFirstPoint) > kCloseSqd) {
                 data->fLineNormal = pt - data->fFirstPoint;
                 data->fLineNormal.normalize();
-                data->fLineNormal.setOrthog(data->fLineNormal);
+                data->fLineNormal = SkPointPriv::MakeOrthog(data->fLineNormal);
                 data->fLineC = -data->fLineNormal.dot(data->fFirstPoint);
                 data->fStage = DegenerateTestData::kLine;
             }
@@ -207,15 +215,20 @@ static void update_degenerate_test(DegenerateTestData* data, const SkPoint& pt) 
         case DegenerateTestData::kNonDegenerate:
             break;
         default:
-            SkFAIL("Unexpected degenerate test stage.");
+            SK_ABORT("Unexpected degenerate test stage.");
     }
 }
 
 static inline bool get_direction(const SkPath& path, const SkMatrix& m,
                                  SkPathPriv::FirstDirection* dir) {
+    // At this point, we've already returned true from canDraw(), which checked that the path's
+    // direction could be determined, so this should just be fetching the cached direction.
+    // However, if perspective is involved, we're operating on a transformed path, which may no
+    // longer have a computable direction.
     if (!SkPathPriv::CheapComputeFirstDirection(path, dir)) {
         return false;
     }
+
     // check whether m reverses the orientation
     SkASSERT(!m.hasPerspective());
     SkScalar det2x2 = m.get(SkMatrix::kMScaleX) * m.get(SkMatrix::kMScaleY) -
@@ -223,6 +236,7 @@ static inline bool get_direction(const SkPath& path, const SkMatrix& m,
     if (det2x2 < 0) {
         *dir = SkPathPriv::OppositeFirstDirection(*dir);
     }
+
     return true;
 }
 
@@ -235,7 +249,7 @@ static inline void add_line_to_segment(const SkPoint& pt,
 
 static inline void add_quad_segment(const SkPoint pts[3],
                                     SegmentArray* segments) {
-    if (pts[0].distanceToSqd(pts[1]) < kCloseSqd || pts[1].distanceToSqd(pts[2]) < kCloseSqd) {
+    if (SkPointPriv::DistanceToLineSegmentBetweenSqd(pts[1], pts[0], pts[2]) < kCloseSqd) {
         if (pts[0] != pts[2]) {
             add_line_to_segment(pts[2], segments);
         }
@@ -274,70 +288,69 @@ static bool get_segments(const SkPath& path,
     // draw nothing.
     DegenerateTestData degenerateData;
     SkPathPriv::FirstDirection dir;
-    // get_direction can fail for some degenerate paths.
     if (!get_direction(path, m, &dir)) {
         return false;
     }
 
     for (;;) {
         SkPoint pts[4];
-        SkPath::Verb verb = iter.next(pts, true, true);
+        SkPath::Verb verb = iter.next(pts);
         switch (verb) {
             case SkPath::kMove_Verb:
                 m.mapPoints(pts, 1);
                 update_degenerate_test(&degenerateData, pts[0]);
                 break;
             case SkPath::kLine_Verb: {
-                m.mapPoints(&pts[1], 1);
-                update_degenerate_test(&degenerateData, pts[1]);
-                add_line_to_segment(pts[1], segments);
+                if (!SkPathPriv::AllPointsEq(pts, 2)) {
+                    m.mapPoints(&pts[1], 1);
+                    update_degenerate_test(&degenerateData, pts[1]);
+                    add_line_to_segment(pts[1], segments);
+                }
                 break;
             }
             case SkPath::kQuad_Verb:
-                m.mapPoints(pts, 3);
-                update_degenerate_test(&degenerateData, pts[1]);
-                update_degenerate_test(&degenerateData, pts[2]);
-                add_quad_segment(pts, segments);
+                if (!SkPathPriv::AllPointsEq(pts, 3)) {
+                    m.mapPoints(pts, 3);
+                    update_degenerate_test(&degenerateData, pts[1]);
+                    update_degenerate_test(&degenerateData, pts[2]);
+                    add_quad_segment(pts, segments);
+                }
                 break;
             case SkPath::kConic_Verb: {
-                m.mapPoints(pts, 3);
-                SkScalar weight = iter.conicWeight();
-                SkAutoConicToQuads converter;
-                const SkPoint* quadPts = converter.computeQuads(pts, weight, 0.5f);
-                for (int i = 0; i < converter.countQuads(); ++i) {
-                    update_degenerate_test(&degenerateData, quadPts[2*i + 1]);
-                    update_degenerate_test(&degenerateData, quadPts[2*i + 2]);
-                    add_quad_segment(quadPts + 2*i, segments);
+                if (!SkPathPriv::AllPointsEq(pts, 3)) {
+                    m.mapPoints(pts, 3);
+                    SkScalar weight = iter.conicWeight();
+                    SkAutoConicToQuads converter;
+                    const SkPoint* quadPts = converter.computeQuads(pts, weight, 0.25f);
+                    for (int i = 0; i < converter.countQuads(); ++i) {
+                        update_degenerate_test(&degenerateData, quadPts[2*i + 1]);
+                        update_degenerate_test(&degenerateData, quadPts[2*i + 2]);
+                        add_quad_segment(quadPts + 2*i, segments);
+                    }
                 }
                 break;
             }
             case SkPath::kCubic_Verb: {
-                m.mapPoints(pts, 4);
-                update_degenerate_test(&degenerateData, pts[1]);
-                update_degenerate_test(&degenerateData, pts[2]);
-                update_degenerate_test(&degenerateData, pts[3]);
-                add_cubic_segments(pts, dir, segments);
+                if (!SkPathPriv::AllPointsEq(pts, 4)) {
+                    m.mapPoints(pts, 4);
+                    update_degenerate_test(&degenerateData, pts[1]);
+                    update_degenerate_test(&degenerateData, pts[2]);
+                    update_degenerate_test(&degenerateData, pts[3]);
+                    add_cubic_segments(pts, dir, segments);
+                }
                 break;
-            };
+            }
             case SkPath::kDone_Verb:
                 if (degenerateData.isDegenerate()) {
                     return false;
                 } else {
-                    compute_vectors(segments, fanPt, dir, vCount, iCount);
-                    return true;
+                    return compute_vectors(segments, fanPt, dir, vCount, iCount);
                 }
             default:
                 break;
         }
     }
 }
-
-struct QuadVertex {
-    SkPoint  fPos;
-    SkPoint  fUV;
-    SkScalar fD0;
-    SkScalar fD1;
-};
 
 struct Draw {
     Draw() : fVertexCnt(0), fIndexCnt(0) {}
@@ -347,15 +360,18 @@ struct Draw {
 
 typedef SkTArray<Draw, true> DrawArray;
 
-static void create_vertices(const SegmentArray&  segments,
+static void create_vertices(const SegmentArray& segments,
                             const SkPoint& fanPt,
-                            DrawArray*     draws,
-                            QuadVertex*    verts,
-                            uint16_t*      idxs) {
+                            const GrVertexColor& color,
+                            DrawArray* draws,
+                            GrVertexWriter& verts,
+                            uint16_t* idxs,
+                            size_t vertexStride) {
     Draw* draw = &draws->push_back();
     // alias just to make vert/index assignments easier to read.
     int* v = &draw->fVertexCnt;
     int* i = &draw->fIndexCnt;
+    const size_t uvOffset = sizeof(SkPoint) + color.size();
 
     int count = segments.count();
     for (int a = 0; a < count; ++a) {
@@ -372,26 +388,21 @@ static void create_vertices(const SegmentArray&  segments,
             vCount += 6;
         }
         if (draw->fVertexCnt + vCount > (1 << 16)) {
-            verts += *v;
             idxs += *i;
             draw = &draws->push_back();
             v = &draw->fVertexCnt;
             i = &draw->fIndexCnt;
         }
 
+        const SkScalar negOneDists[2] = { -SK_Scalar1, -SK_Scalar1 };
+
         // FIXME: These tris are inset in the 1 unit arc around the corner
-        verts[*v + 0].fPos = sega.endPt();
-        verts[*v + 1].fPos = verts[*v + 0].fPos + sega.endNorm();
-        verts[*v + 2].fPos = verts[*v + 0].fPos + segb.fMid;
-        verts[*v + 3].fPos = verts[*v + 0].fPos + segb.fNorms[0];
-        verts[*v + 0].fUV.set(0,0);
-        verts[*v + 1].fUV.set(0,-SK_Scalar1);
-        verts[*v + 2].fUV.set(0,-SK_Scalar1);
-        verts[*v + 3].fUV.set(0,-SK_Scalar1);
-        verts[*v + 0].fD0 = verts[*v + 0].fD1 = -SK_Scalar1;
-        verts[*v + 1].fD0 = verts[*v + 1].fD1 = -SK_Scalar1;
-        verts[*v + 2].fD0 = verts[*v + 2].fD1 = -SK_Scalar1;
-        verts[*v + 3].fD0 = verts[*v + 3].fD1 = -SK_Scalar1;
+        SkPoint p0 = sega.endPt();
+        // Position, Color, UV, D0, D1
+        verts.write(p0,                  color, SkPoint{0, 0},           negOneDists);
+        verts.write(p0 + sega.endNorm(), color, SkPoint{0, -SK_Scalar1}, negOneDists);
+        verts.write(p0 + segb.fMid,      color, SkPoint{0, -SK_Scalar1}, negOneDists);
+        verts.write(p0 + segb.fNorms[0], color, SkPoint{0, -SK_Scalar1}, negOneDists);
 
         idxs[*i + 0] = *v + 0;
         idxs[*i + 1] = *v + 2;
@@ -404,28 +415,17 @@ static void create_vertices(const SegmentArray&  segments,
         *i += 6;
 
         if (Segment::kLine == segb.fType) {
-            verts[*v + 0].fPos = fanPt;
-            verts[*v + 1].fPos = sega.endPt();
-            verts[*v + 2].fPos = segb.fPts[0];
-
-            verts[*v + 3].fPos = verts[*v + 1].fPos + segb.fNorms[0];
-            verts[*v + 4].fPos = verts[*v + 2].fPos + segb.fNorms[0];
-
             // we draw the line edge as a degenerate quad (u is 0, v is the
             // signed distance to the edge)
-            SkScalar dist = fanPt.distanceToLineBetween(verts[*v + 1].fPos,
-                                                        verts[*v + 2].fPos);
-            verts[*v + 0].fUV.set(0, dist);
-            verts[*v + 1].fUV.set(0, 0);
-            verts[*v + 2].fUV.set(0, 0);
-            verts[*v + 3].fUV.set(0, -SK_Scalar1);
-            verts[*v + 4].fUV.set(0, -SK_Scalar1);
+            SkPoint v1Pos = sega.endPt();
+            SkPoint v2Pos = segb.fPts[0];
+            SkScalar dist = SkPointPriv::DistanceToLineBetween(fanPt, v1Pos, v2Pos);
 
-            verts[*v + 0].fD0 = verts[*v + 0].fD1 = -SK_Scalar1;
-            verts[*v + 1].fD0 = verts[*v + 1].fD1 = -SK_Scalar1;
-            verts[*v + 2].fD0 = verts[*v + 2].fD1 = -SK_Scalar1;
-            verts[*v + 3].fD0 = verts[*v + 3].fD1 = -SK_Scalar1;
-            verts[*v + 4].fD0 = verts[*v + 4].fD1 = -SK_Scalar1;
+            verts.write(fanPt,                  color, SkPoint{0, dist},        negOneDists);
+            verts.write(v1Pos,                  color, SkPoint{0, 0},           negOneDists);
+            verts.write(v2Pos,                  color, SkPoint{0, 0},           negOneDists);
+            verts.write(v1Pos + segb.fNorms[0], color, SkPoint{0, -SK_Scalar1}, negOneDists);
+            verts.write(v2Pos + segb.fNorms[0], color, SkPoint{0, -SK_Scalar1}, negOneDists);
 
             idxs[*i + 0] = *v + 3;
             idxs[*i + 1] = *v + 1;
@@ -450,36 +450,49 @@ static void create_vertices(const SegmentArray&  segments,
 
             *v += 5;
         } else {
+            void* quadVertsBegin = verts.fPtr;
+
             SkPoint qpts[] = {sega.endPt(), segb.fPts[0], segb.fPts[1]};
+
+            SkScalar c0 = segb.fNorms[0].dot(qpts[0]);
+            SkScalar c1 = segb.fNorms[1].dot(qpts[2]);
+            GrVertexWriter::Skip<SkPoint> skipUVs;
+
+            verts.write(fanPt,
+                        color, skipUVs,
+                        -segb.fNorms[0].dot(fanPt) + c0,
+                        -segb.fNorms[1].dot(fanPt) + c1);
+
+            verts.write(qpts[0],
+                        color, skipUVs,
+                        0.0f,
+                        -segb.fNorms[1].dot(qpts[0]) + c1);
+
+            verts.write(qpts[2],
+                        color, skipUVs,
+                        -segb.fNorms[0].dot(qpts[2]) + c0,
+                        0.0f);
+
+            verts.write(qpts[0] + segb.fNorms[0],
+                        color, skipUVs,
+                        -SK_ScalarMax/100,
+                        -SK_ScalarMax/100);
+
+            verts.write(qpts[2] + segb.fNorms[1],
+                        color, skipUVs,
+                        -SK_ScalarMax/100,
+                        -SK_ScalarMax/100);
 
             SkVector midVec = segb.fNorms[0] + segb.fNorms[1];
             midVec.normalize();
 
-            verts[*v + 0].fPos = fanPt;
-            verts[*v + 1].fPos = qpts[0];
-            verts[*v + 2].fPos = qpts[2];
-            verts[*v + 3].fPos = qpts[0] + segb.fNorms[0];
-            verts[*v + 4].fPos = qpts[2] + segb.fNorms[1];
-            verts[*v + 5].fPos = qpts[1] + midVec;
-
-            SkScalar c = segb.fNorms[0].dot(qpts[0]);
-            verts[*v + 0].fD0 =  -segb.fNorms[0].dot(fanPt) + c;
-            verts[*v + 1].fD0 =  0.f;
-            verts[*v + 2].fD0 =  -segb.fNorms[0].dot(qpts[2]) + c;
-            verts[*v + 3].fD0 = -SK_ScalarMax/100;
-            verts[*v + 4].fD0 = -SK_ScalarMax/100;
-            verts[*v + 5].fD0 = -SK_ScalarMax/100;
-
-            c = segb.fNorms[1].dot(qpts[2]);
-            verts[*v + 0].fD1 =  -segb.fNorms[1].dot(fanPt) + c;
-            verts[*v + 1].fD1 =  -segb.fNorms[1].dot(qpts[0]) + c;
-            verts[*v + 2].fD1 =  0.f;
-            verts[*v + 3].fD1 = -SK_ScalarMax/100;
-            verts[*v + 4].fD1 = -SK_ScalarMax/100;
-            verts[*v + 5].fD1 = -SK_ScalarMax/100;
+            verts.write(qpts[1] + midVec,
+                        color, skipUVs,
+                        -SK_ScalarMax/100,
+                        -SK_ScalarMax/100);
 
             GrPathUtils::QuadUVMatrix toUV(qpts);
-            toUV.apply<6, sizeof(QuadVertex), sizeof(SkPoint)>(verts + *v);
+            toUV.apply(quadVertsBegin, 6, vertexStride, uvOffset);
 
             idxs[*i + 0] = *v + 3;
             idxs[*i + 1] = *v + 1;
@@ -524,25 +537,20 @@ static void create_vertices(const SegmentArray&  segments,
 
 class QuadEdgeEffect : public GrGeometryProcessor {
 public:
-
-    static sk_sp<GrGeometryProcessor> Make(GrColor color, const SkMatrix& localMatrix,
-                                           bool usesLocalCoords) {
-        return sk_sp<GrGeometryProcessor>(new QuadEdgeEffect(color, localMatrix, usesLocalCoords));
+    static GrGeometryProcessor* Make(SkArenaAlloc* arena,
+                                     const SkMatrix& localMatrix,
+                                     bool usesLocalCoords,
+                                     bool wideColor) {
+        return arena->make<QuadEdgeEffect>(localMatrix, usesLocalCoords, wideColor);
     }
 
     ~QuadEdgeEffect() override {}
 
     const char* name() const override { return "QuadEdge"; }
 
-    const Attribute* inPosition() const { return fInPosition; }
-    const Attribute* inQuadEdge() const { return fInQuadEdge; }
-    GrColor color() const { return fColor; }
-    const SkMatrix& localMatrix() const { return fLocalMatrix; }
-    bool usesLocalCoords() const { return fUsesLocalCoords; }
-
     class GLSLProcessor : public GrGLSLGeometryProcessor {
     public:
-        GLSLProcessor() : fColor(GrColor_ILLEGAL) {}
+        GLSLProcessor() {}
 
         void onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) override {
             const QuadEdgeEffect& qe = args.fGP.cast<QuadEdgeEffect>();
@@ -553,72 +561,62 @@ public:
             // emit attributes
             varyingHandler->emitAttributes(qe);
 
-            GrGLSLVertToFrag v(kVec4f_GrSLType);
+            GrGLSLVarying v(kHalf4_GrSLType);
             varyingHandler->addVarying("QuadEdge", &v);
-            vertBuilder->codeAppendf("%s = %s;", v.vsOut(), qe.inQuadEdge()->fName);
+            vertBuilder->codeAppendf("%s = %s;", v.vsOut(), qe.fInQuadEdge.name());
 
-            GrGLSLPPFragmentBuilder* fragBuilder = args.fFragBuilder;
             // Setup pass through color
-            this->setupUniformColor(fragBuilder, uniformHandler, args.fOutputColor,
-                                    &fColorUniform);
+            varyingHandler->addPassThroughAttribute(qe.fInColor, args.fOutputColor);
+
+            GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;
 
             // Setup position
-            this->setupPosition(vertBuilder, gpArgs, qe.inPosition()->fName);
+            this->writeOutputPosition(vertBuilder, gpArgs, qe.fInPosition.name());
 
             // emit transforms
             this->emitTransforms(vertBuilder,
                                  varyingHandler,
                                  uniformHandler,
-                                 gpArgs->fPositionVar,
-                                 qe.inPosition()->fName,
-                                 qe.localMatrix(),
+                                 qe.fInPosition.asShaderVar(),
+                                 qe.fLocalMatrix,
                                  args.fFPCoordTransformHandler);
 
-            fragBuilder->codeAppendf("float edgeAlpha;");
+            fragBuilder->codeAppendf("half edgeAlpha;");
 
             // keep the derivative instructions outside the conditional
-            fragBuilder->codeAppendf("vec2 duvdx = dFdx(%s.xy);", v.fsIn());
-            fragBuilder->codeAppendf("vec2 duvdy = dFdy(%s.xy);", v.fsIn());
+            fragBuilder->codeAppendf("half2 duvdx = half2(dFdx(%s.xy));", v.fsIn());
+            fragBuilder->codeAppendf("half2 duvdy = half2(dFdy(%s.xy));", v.fsIn());
             fragBuilder->codeAppendf("if (%s.z > 0.0 && %s.w > 0.0) {", v.fsIn(), v.fsIn());
             // today we know z and w are in device space. We could use derivatives
             fragBuilder->codeAppendf("edgeAlpha = min(min(%s.z, %s.w) + 0.5, 1.0);", v.fsIn(),
                                      v.fsIn());
             fragBuilder->codeAppendf ("} else {");
-            fragBuilder->codeAppendf("vec2 gF = vec2(2.0*%s.x*duvdx.x - duvdx.y,"
+            fragBuilder->codeAppendf("half2 gF = half2(2.0*%s.x*duvdx.x - duvdx.y,"
                                      "               2.0*%s.x*duvdy.x - duvdy.y);",
                                      v.fsIn(), v.fsIn());
             fragBuilder->codeAppendf("edgeAlpha = (%s.x*%s.x - %s.y);", v.fsIn(), v.fsIn(),
                                      v.fsIn());
             fragBuilder->codeAppendf("edgeAlpha = "
-                                     "clamp(0.5 - edgeAlpha / length(gF), 0.0, 1.0);}");
+                                     "saturate(0.5 - edgeAlpha / length(gF));}");
 
-            fragBuilder->codeAppendf("%s = vec4(edgeAlpha);", args.fOutputCoverage);
+            fragBuilder->codeAppendf("%s = half4(edgeAlpha);", args.fOutputCoverage);
         }
 
         static inline void GenKey(const GrGeometryProcessor& gp,
                                   const GrShaderCaps&,
                                   GrProcessorKeyBuilder* b) {
             const QuadEdgeEffect& qee = gp.cast<QuadEdgeEffect>();
-            b->add32(SkToBool(qee.usesLocalCoords() && qee.localMatrix().hasPerspective()));
+            b->add32(SkToBool(qee.fUsesLocalCoords && qee.fLocalMatrix.hasPerspective()));
         }
 
         void setData(const GrGLSLProgramDataManager& pdman,
                      const GrPrimitiveProcessor& gp,
                      FPCoordTransformIter&& transformIter) override {
             const QuadEdgeEffect& qe = gp.cast<QuadEdgeEffect>();
-            if (qe.color() != fColor) {
-                float c[4];
-                GrColorToRGBAFloat(qe.color(), c);
-                pdman.set4fv(fColorUniform, 1, c);
-                fColor = qe.color();
-            }
             this->setTransformDataHelper(qe.fLocalMatrix, pdman, &transformIter);
         }
 
     private:
-        GrColor fColor;
-        UniformHandle fColorUniform;
-
         typedef GrGLSLGeometryProcessor INHERITED;
     };
 
@@ -631,22 +629,26 @@ public:
     }
 
 private:
-    QuadEdgeEffect(GrColor color, const SkMatrix& localMatrix, bool usesLocalCoords)
-        : fColor(color)
-        , fLocalMatrix(localMatrix)
-        , fUsesLocalCoords(usesLocalCoords) {
-        this->initClassID<QuadEdgeEffect>();
-        fInPosition = &this->addVertexAttrib("inPosition", kVec2f_GrVertexAttribType);
-        fInQuadEdge = &this->addVertexAttrib("inQuadEdge", kVec4f_GrVertexAttribType);
+    friend class ::SkArenaAlloc; // for access to ctor
+
+    QuadEdgeEffect(const SkMatrix& localMatrix, bool usesLocalCoords, bool wideColor)
+            : INHERITED(kQuadEdgeEffect_ClassID)
+            , fLocalMatrix(localMatrix)
+            , fUsesLocalCoords(usesLocalCoords) {
+        fInPosition = {"inPosition", kFloat2_GrVertexAttribType, kFloat2_GrSLType};
+        fInColor = MakeColorAttribute("inColor", wideColor);
+        fInQuadEdge = {"inQuadEdge", kFloat4_GrVertexAttribType, kHalf4_GrSLType};
+        this->setVertexAttributes(&fInPosition, 3);
     }
 
-    const Attribute* fInPosition;
-    const Attribute* fInQuadEdge;
-    GrColor          fColor;
-    SkMatrix         fLocalMatrix;
-    bool             fUsesLocalCoords;
+    Attribute fInPosition;
+    Attribute fInColor;
+    Attribute fInQuadEdge;
 
-    GR_DECLARE_GEOMETRY_PROCESSOR_TEST;
+    SkMatrix fLocalMatrix;
+    bool fUsesLocalCoords;
+
+    GR_DECLARE_GEOMETRY_PROCESSOR_TEST
 
     typedef GrGeometryProcessor INHERITED;
 };
@@ -654,192 +656,97 @@ private:
 GR_DEFINE_GEOMETRY_PROCESSOR_TEST(QuadEdgeEffect);
 
 #if GR_TEST_UTILS
-sk_sp<GrGeometryProcessor> QuadEdgeEffect::TestCreate(GrProcessorTestData* d) {
+GrGeometryProcessor* QuadEdgeEffect::TestCreate(GrProcessorTestData* d) {
     // Doesn't work without derivative instructions.
     return d->caps()->shaderCaps()->shaderDerivativeSupport()
-                   ? QuadEdgeEffect::Make(GrRandomColor(d->fRandom),
-                                          GrTest::TestMatrix(d->fRandom),
-                                          d->fRandom->nextBool())
+                   ? QuadEdgeEffect::Make(d->allocator(), GrTest::TestMatrix(d->fRandom),
+                                          d->fRandom->nextBool(), d->fRandom->nextBool())
                    : nullptr;
 }
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
 
-bool GrAAConvexPathRenderer::onCanDrawPath(const CanDrawPathArgs& args) const {
-    return (args.fShaderCaps->shaderDerivativeSupport() && (GrAAType::kCoverage == args.fAAType) &&
-            args.fShape->style().isSimpleFill() && !args.fShape->inverseFilled() &&
-            args.fShape->knownToBeConvex());
+GrPathRenderer::CanDrawPath
+GrAAConvexPathRenderer::onCanDrawPath(const CanDrawPathArgs& args) const {
+    // This check requires convexity and known direction, since the direction is used to build
+    // the geometry segments. Degenerate convex paths will fall through to some other path renderer.
+    if (args.fCaps->shaderCaps()->shaderDerivativeSupport() &&
+        (GrAAType::kCoverage == args.fAAType) && args.fShape->style().isSimpleFill() &&
+        !args.fShape->inverseFilled() && args.fShape->knownToBeConvex() &&
+        args.fShape->knownDirection()) {
+        return CanDrawPath::kYes;
+    }
+    return CanDrawPath::kNo;
 }
 
-// extract the result vertices and indices from the GrAAConvexTessellator
-static void extract_verts(const GrAAConvexTessellator& tess,
-                          void* vertices,
-                          size_t vertexStride,
-                          GrColor color,
-                          uint16_t* idxs,
-                          bool tweakAlphaForCoverage) {
-    intptr_t verts = reinterpret_cast<intptr_t>(vertices);
+namespace {
 
-    for (int i = 0; i < tess.numPts(); ++i) {
-        *((SkPoint*)((intptr_t)verts + i * vertexStride)) = tess.point(i);
-    }
+class AAConvexPathOp final : public GrMeshDrawOp {
+private:
+    using Helper = GrSimpleMeshDrawOpHelperWithStencil;
 
-    // Make 'verts' point to the colors
-    verts += sizeof(SkPoint);
-    for (int i = 0; i < tess.numPts(); ++i) {
-        if (tweakAlphaForCoverage) {
-            SkASSERT(SkScalarRoundToInt(255.0f * tess.coverage(i)) <= 255);
-            unsigned scale = SkScalarRoundToInt(255.0f * tess.coverage(i));
-            GrColor scaledColor = (0xff == scale) ? color : SkAlphaMulQ(color, scale);
-            *reinterpret_cast<GrColor*>(verts + i * vertexStride) = scaledColor;
-        } else {
-            *reinterpret_cast<GrColor*>(verts + i * vertexStride) = color;
-            *reinterpret_cast<float*>(verts + i * vertexStride + sizeof(GrColor)) =
-                    tess.coverage(i);
-        }
-    }
-
-    for (int i = 0; i < tess.numIndices(); ++i) {
-        idxs[i] = tess.index(i);
-    }
-}
-
-static sk_sp<GrGeometryProcessor> create_fill_gp(bool tweakAlphaForCoverage,
-                                                 const SkMatrix& viewMatrix,
-                                                 bool usesLocalCoords) {
-    using namespace GrDefaultGeoProcFactory;
-
-    Coverage::Type coverageType;
-    if (tweakAlphaForCoverage) {
-        coverageType = Coverage::kSolid_Type;
-    } else {
-        coverageType = Coverage::kAttribute_Type;
-    }
-    LocalCoords::Type localCoordsType =
-            usesLocalCoords ? LocalCoords::kUsePosition_Type : LocalCoords::kUnused_Type;
-    return MakeForDeviceSpace(Color::kPremulGrColorAttribute_Type, coverageType, localCoordsType,
-                              viewMatrix);
-}
-
-class AAConvexPathOp final : public GrLegacyMeshDrawOp {
 public:
     DEFINE_OP_CLASS_ID
-    static std::unique_ptr<GrLegacyMeshDrawOp> Make(GrColor color, const SkMatrix& viewMatrix,
-                                                    const SkPath& path) {
-        return std::unique_ptr<GrLegacyMeshDrawOp>(new AAConvexPathOp(color, viewMatrix, path));
+
+    static std::unique_ptr<GrDrawOp> Make(GrRecordingContext* context,
+                                          GrPaint&& paint,
+                                          const SkMatrix& viewMatrix,
+                                          const SkPath& path,
+                                          const GrUserStencilSettings* stencilSettings) {
+        return Helper::FactoryHelper<AAConvexPathOp>(context, std::move(paint), viewMatrix, path,
+                                                     stencilSettings);
+    }
+
+    AAConvexPathOp(const Helper::MakeArgs& helperArgs, const SkPMColor4f& color,
+                   const SkMatrix& viewMatrix, const SkPath& path,
+                   const GrUserStencilSettings* stencilSettings)
+            : INHERITED(ClassID()), fHelper(helperArgs, GrAAType::kCoverage, stencilSettings) {
+        fPaths.emplace_back(PathData{viewMatrix, path, color});
+        this->setTransformedBounds(path.getBounds(), viewMatrix, HasAABloat::kYes,
+                                   IsHairline::kNo);
     }
 
     const char* name() const override { return "AAConvexPathOp"; }
 
+    void visitProxies(const VisitProxyFunc& func) const override {
+        fHelper.visitProxies(func);
+    }
+
+#ifdef SK_DEBUG
     SkString dumpInfo() const override {
         SkString string;
-        string.appendf("Color: 0x%08x, Count: %d\n", fColor, fPaths.count());
-        string.append(DumpPipelineInfo(*this->pipeline()));
-        string.append(INHERITED::dumpInfo());
+        string.appendf("Count: %d\n", fPaths.count());
+        string += fHelper.dumpInfo();
+        string += INHERITED::dumpInfo();
         return string;
+    }
+#endif
+
+    FixedFunctionFlags fixedFunctionFlags() const override { return fHelper.fixedFunctionFlags(); }
+
+    GrProcessorSet::Analysis finalize(
+            const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+            GrClampType clampType) override {
+        return fHelper.finalizeProcessors(
+                caps, clip, hasMixedSampledCoverage, clampType,
+                GrProcessorAnalysisCoverage::kSingleChannel, &fPaths.back().fColor, &fWideColor);
     }
 
 private:
-    AAConvexPathOp(GrColor color, const SkMatrix& viewMatrix, const SkPath& path)
-            : INHERITED(ClassID()), fColor(color) {
-        fPaths.emplace_back(PathData{viewMatrix, path});
-        this->setTransformedBounds(path.getBounds(), viewMatrix, HasAABloat::kYes, IsZeroArea::kNo);
-    }
-
-    void getProcessorAnalysisInputs(GrProcessorAnalysisColor* color,
-                                    GrProcessorAnalysisCoverage* coverage) const override {
-        color->setToConstant(fColor);
-        *coverage = GrProcessorAnalysisCoverage::kSingleChannel;
-    }
-
-    void applyPipelineOptimizations(const PipelineOptimizations& optimizations) override {
-        optimizations.getOverrideColorIfSet(&fColor);
-
-        fUsesLocalCoords = optimizations.readsLocalCoords();
-        fLinesOnly = SkPath::kLine_SegmentMask == fPaths[0].fPath.getSegmentMasks();
-        fCanTweakAlphaForCoverage = optimizations.canTweakAlphaForCoverage();
-    }
-
-    void prepareLinesOnlyDraws(Target* target) const {
-        bool canTweakAlphaForCoverage = this->canTweakAlphaForCoverage();
-
-        // Setup GrGeometryProcessor
-        sk_sp<GrGeometryProcessor> gp(create_fill_gp(
-                canTweakAlphaForCoverage, this->viewMatrix(), this->usesLocalCoords()));
-        if (!gp) {
-            SkDebugf("Could not create GrGeometryProcessor\n");
-            return;
-        }
-
-        size_t vertexStride = gp->getVertexStride();
-
-        SkASSERT(canTweakAlphaForCoverage ?
-                 vertexStride == sizeof(GrDefaultGeoProcFactory::PositionColorAttr) :
-                 vertexStride == sizeof(GrDefaultGeoProcFactory::PositionColorCoverageAttr));
-
-        GrAAConvexTessellator tess;
-
-        int instanceCount = fPaths.count();
-
-        for (int i = 0; i < instanceCount; i++) {
-            tess.rewind();
-
-            const PathData& args = fPaths[i];
-
-            if (!tess.tessellate(args.fViewMatrix, args.fPath)) {
-                continue;
-            }
-
-            const GrBuffer* vertexBuffer;
-            int firstVertex;
-
-            void* verts = target->makeVertexSpace(vertexStride, tess.numPts(), &vertexBuffer,
-                                                  &firstVertex);
-            if (!verts) {
-                SkDebugf("Could not allocate vertices\n");
-                return;
-            }
-
-            const GrBuffer* indexBuffer;
-            int firstIndex;
-
-            uint16_t* idxs = target->makeIndexSpace(tess.numIndices(), &indexBuffer, &firstIndex);
-            if (!idxs) {
-                SkDebugf("Could not allocate indices\n");
-                return;
-            }
-
-            extract_verts(tess, verts, vertexStride, fColor, idxs, canTweakAlphaForCoverage);
-
-            GrMesh mesh;
-            mesh.initIndexed(kTriangles_GrPrimitiveType,
-                             vertexBuffer, indexBuffer,
-                             firstVertex, firstIndex,
-                             tess.numPts(), tess.numIndices());
-            target->draw(gp.get(), this->pipeline(), mesh);
-        }
-    }
-
-    void onPrepareDraws(Target* target) const override {
-#ifndef SK_IGNORE_LINEONLY_AA_CONVEX_PATH_OPTS
-        if (this->linesOnly()) {
-            this->prepareLinesOnlyDraws(target);
-            return;
-        }
-#endif
-
+    void onPrepareDraws(Target* target) override {
         int instanceCount = fPaths.count();
 
         SkMatrix invert;
-        if (this->usesLocalCoords() && !this->viewMatrix().invert(&invert)) {
-            SkDebugf("Could not invert viewmatrix\n");
+        if (fHelper.usesLocalCoords() && !fPaths.back().fViewMatrix.invert(&invert)) {
             return;
         }
 
         // Setup GrGeometryProcessor
-        sk_sp<GrGeometryProcessor> quadProcessor(
-                QuadEdgeEffect::Make(this->color(), invert, this->usesLocalCoords()));
+        GrGeometryProcessor* quadProcessor = QuadEdgeEffect::Make(target->allocator(), invert,
+                                                                  fHelper.usesLocalCoords(),
+                                                                  fWideColor);
+        const size_t kVertexStride = quadProcessor->vertexStride();
 
         // TODO generate all segments for all paths and use one vertex buffer
         for (int i = 0; i < instanceCount; i++) {
@@ -875,19 +782,18 @@ private:
                 continue;
             }
 
-            const GrBuffer* vertexBuffer;
+            sk_sp<const GrBuffer> vertexBuffer;
             int firstVertex;
 
-            size_t vertexStride = quadProcessor->getVertexStride();
-            QuadVertex* verts = reinterpret_cast<QuadVertex*>(target->makeVertexSpace(
-                vertexStride, vertexCount, &vertexBuffer, &firstVertex));
+            GrVertexWriter verts{target->makeVertexSpace(kVertexStride, vertexCount,
+                                                         &vertexBuffer, &firstVertex)};
 
-            if (!verts) {
+            if (!verts.fPtr) {
                 SkDebugf("Could not allocate vertices\n");
                 return;
             }
 
-            const GrBuffer* indexBuffer;
+            sk_sp<const GrBuffer> indexBuffer;
             int firstIndex;
 
             uint16_t *idxs = target->makeIndexSpace(indexCount, &indexBuffer, &firstIndex);
@@ -897,105 +803,82 @@ private:
             }
 
             SkSTArray<kPreallocDrawCnt, Draw, true> draws;
-            create_vertices(segments, fanPt, &draws, verts, idxs);
+            GrVertexColor color(args.fColor, fWideColor);
+            create_vertices(segments, fanPt, color, &draws, verts, idxs, kVertexStride);
 
-            GrMesh mesh;
-
+            GrMesh* meshes = target->allocMeshes(draws.count());
             for (int j = 0; j < draws.count(); ++j) {
                 const Draw& draw = draws[j];
-                mesh.initIndexed(kTriangles_GrPrimitiveType, vertexBuffer, indexBuffer,
-                                 firstVertex, firstIndex, draw.fVertexCnt, draw.fIndexCnt);
-                target->draw(quadProcessor.get(), this->pipeline(), mesh);
-                firstVertex += draw.fVertexCnt;
+                meshes[j].setPrimitiveType(GrPrimitiveType::kTriangles);
+                meshes[j].setIndexed(indexBuffer, draw.fIndexCnt, firstIndex, 0,
+                                     draw.fVertexCnt - 1, GrPrimitiveRestart::kNo);
+                meshes[j].setVertexData(vertexBuffer, firstVertex);
                 firstIndex += draw.fIndexCnt;
+                firstVertex += draw.fVertexCnt;
             }
+            target->recordDraw(quadProcessor, meshes, draws.count(), GrPrimitiveType::kTriangles);
         }
     }
 
-    bool onCombineIfPossible(GrOp* t, const GrCaps& caps) override {
+    void onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) override {
+        fHelper.executeDrawsAndUploads(this, flushState, chainBounds);
+    }
+
+    CombineResult onCombineIfPossible(GrOp* t, const GrCaps& caps) override {
         AAConvexPathOp* that = t->cast<AAConvexPathOp>();
-        if (!GrPipeline::CanCombine(*this->pipeline(), this->bounds(), *that->pipeline(),
-                                    that->bounds(), caps)) {
-            return false;
+        if (!fHelper.isCompatible(that->fHelper, caps, this->bounds(), that->bounds())) {
+            return CombineResult::kCannotCombine;
         }
-
-        if (this->color() != that->color()) {
-            return false;
-        }
-
-        SkASSERT(this->usesLocalCoords() == that->usesLocalCoords());
-        if (this->usesLocalCoords() && !this->viewMatrix().cheapEqualTo(that->viewMatrix())) {
-            return false;
-        }
-
-        if (this->linesOnly() != that->linesOnly()) {
-            return false;
-        }
-
-        // In the event of two ops, one who can tweak, one who cannot, we just fall back to not
-        // tweaking
-        if (this->canTweakAlphaForCoverage() != that->canTweakAlphaForCoverage()) {
-            fCanTweakAlphaForCoverage = false;
+        if (fHelper.usesLocalCoords() &&
+            !fPaths[0].fViewMatrix.cheapEqualTo(that->fPaths[0].fViewMatrix)) {
+            return CombineResult::kCannotCombine;
         }
 
         fPaths.push_back_n(that->fPaths.count(), that->fPaths.begin());
-        this->joinBounds(*that);
-        return true;
+        fWideColor |= that->fWideColor;
+        return CombineResult::kMerged;
     }
-
-    GrColor color() const { return fColor; }
-    bool linesOnly() const { return fLinesOnly; }
-    bool usesLocalCoords() const { return fUsesLocalCoords; }
-    bool canTweakAlphaForCoverage() const { return fCanTweakAlphaForCoverage; }
-    const SkMatrix& viewMatrix() const { return fPaths[0].fViewMatrix; }
-
-    GrColor fColor;
-    bool fUsesLocalCoords;
-    bool fLinesOnly;
-    bool fCanTweakAlphaForCoverage;
 
     struct PathData {
         SkMatrix fViewMatrix;
         SkPath fPath;
+        SkPMColor4f fColor;
     };
 
+    Helper fHelper;
     SkSTArray<1, PathData, true> fPaths;
+    bool fWideColor;
 
-    typedef GrLegacyMeshDrawOp INHERITED;
+    typedef GrMeshDrawOp INHERITED;
 };
+
+}  // anonymous namespace
 
 bool GrAAConvexPathRenderer::onDrawPath(const DrawPathArgs& args) {
     GR_AUDIT_TRAIL_AUTO_FRAME(args.fRenderTargetContext->auditTrail(),
                               "GrAAConvexPathRenderer::onDrawPath");
-    SkASSERT(!args.fRenderTargetContext->isUnifiedMultisampled());
+    SkASSERT(args.fRenderTargetContext->numSamples() <= 1);
     SkASSERT(!args.fShape->isEmpty());
 
     SkPath path;
     args.fShape->asPath(&path);
 
-    std::unique_ptr<GrLegacyMeshDrawOp> op =
-            AAConvexPathOp::Make(args.fPaint.getColor(), *args.fViewMatrix, path);
-
-    GrPipelineBuilder pipelineBuilder(std::move(args.fPaint), args.fAAType);
-    pipelineBuilder.setUserStencil(args.fUserStencilSettings);
-
-    args.fRenderTargetContext->addLegacyMeshDrawOp(std::move(pipelineBuilder), *args.fClip,
-                                                   std::move(op));
-
+    std::unique_ptr<GrDrawOp> op = AAConvexPathOp::Make(args.fContext, std::move(args.fPaint),
+                                                        *args.fViewMatrix,
+                                                        path, args.fUserStencilSettings);
+    args.fRenderTargetContext->addDrawOp(*args.fClip, std::move(op));
     return true;
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if GR_TEST_UTILS
 
-DRAW_OP_TEST_DEFINE(AAConvexPathOp) {
-    GrColor color = GrRandomColor(random);
+GR_DRAW_OP_TEST_DEFINE(AAConvexPathOp) {
     SkMatrix viewMatrix = GrTest::TestMatrixInvertible(random);
     SkPath path = GrTest::TestPathConvex(random);
-
-    return AAConvexPathOp::Make(color, viewMatrix, path);
+    const GrUserStencilSettings* stencilSettings = GrGetRandomStencil(random, context);
+    return AAConvexPathOp::Make(context, std::move(paint), viewMatrix, path, stencilSettings);
 }
 
 #endif

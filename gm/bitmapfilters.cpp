@@ -5,8 +5,20 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "sk_tool_utils.h"
+#include "gm/gm.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkFilterQuality.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypeface.h"
+#include "include/core/SkTypes.h"
+#include "tools/ToolUtils.h"
 
 static void make_bm(SkBitmap* bm) {
     const SkColor colors[4] = {
@@ -17,14 +29,12 @@ static void make_bm(SkBitmap* bm) {
     for (size_t i = 0; i < SK_ARRAY_COUNT(colors); ++i) {
         colorsPM[i] = SkPreMultiplyColor(colors[i]);
     }
-    bm->allocPixels(SkImageInfo::Make(2, 2, kIndex_8_SkColorType,
-                                      kPremul_SkAlphaType),
-                    SkColorTable::Make(colorsPM, 4));
+    bm->allocN32Pixels(2, 2, true);
 
-    *bm->getAddr8(0, 0) = 0;
-    *bm->getAddr8(1, 0) = 1;
-    *bm->getAddr8(0, 1) = 2;
-    *bm->getAddr8(1, 1) = 3;
+    *bm->getAddr32(0, 0) = colorsPM[0];
+    *bm->getAddr32(1, 0) = colorsPM[1];
+    *bm->getAddr32(0, 1) = colorsPM[2];
+    *bm->getAddr32(1, 1) = colorsPM[3];
 }
 
 static SkScalar draw_bm(SkCanvas* canvas, const SkBitmap& bm,
@@ -46,38 +56,38 @@ static SkScalar draw_row(SkCanvas* canvas, const SkBitmap& bm) {
     SkAutoCanvasRestore acr(canvas, true);
 
     SkPaint paint;
+    paint.setAntiAlias(true);
+
     SkScalar x = 0;
     const int scale = 32;
 
-    paint.setAntiAlias(true);
-    sk_tool_utils::set_portable_typeface(&paint);
-    const char* name = sk_tool_utils::colortype_name(bm.colorType());
-    canvas->drawText(name, strlen(name), x, SkIntToScalar(bm.height())*scale*5/8,
-                     paint);
+    SkFont      font(ToolUtils::create_portable_typeface());
+    const char* name = ToolUtils::colortype_name(bm.colorType());
+    canvas->drawString(name, x, SkIntToScalar(bm.height())*scale*5/8,
+                       font, paint);
     canvas->translate(SkIntToScalar(48), 0);
 
     canvas->scale(SkIntToScalar(scale), SkIntToScalar(scale));
 
     x += draw_set(canvas, bm, 0, &paint);
     paint.reset();
-    paint.setAlpha(0x80);
+    paint.setAlphaf(0.5f);
     draw_set(canvas, bm, x, &paint);
     return x * scale / 3;
 }
 
 class FilterGM : public skiagm::GM {
     void onOnceBeforeDraw() override {
-        make_bm(&fBM8);
-        fBM8.copyTo(&fBM4444, kARGB_4444_SkColorType);
-        fBM8.copyTo(&fBM16, kRGB_565_SkColorType);
-        fBM8.copyTo(&fBM32, kN32_SkColorType);
+        make_bm(&fBM32);
+        ToolUtils::copy_to(&fBM4444, kARGB_4444_SkColorType, fBM32);
+        ToolUtils::copy_to(&fBM16, kRGB_565_SkColorType, fBM32);
     }
 
 public:
-    SkBitmap    fBM8, fBM4444, fBM16, fBM32;
+    SkBitmap    fBM4444, fBM16, fBM32;
 
     FilterGM() {
-        this->setBGColor(sk_tool_utils::color_to_565(0xFFDDDDDD));
+        this->setBGColor(0xFFDDDDDD);
     }
 
 protected:
@@ -86,7 +96,7 @@ protected:
     }
 
     SkISize onISize() override {
-        return SkISize::Make(540, 330);
+        return SkISize::Make(540, 250);
     }
 
     void onDraw(SkCanvas* canvas) override {
@@ -94,8 +104,6 @@ protected:
         SkScalar y = SkIntToScalar(10);
 
         canvas->translate(x, y);
-        y = draw_row(canvas, fBM8);
-        canvas->translate(0, y);
         y = draw_row(canvas, fBM4444);
         canvas->translate(0, y);
         y = draw_row(canvas, fBM16);
@@ -124,7 +132,6 @@ class TestExtractAlphaGM : public skiagm::GM {
         paint.setStrokeWidth(20);
 
         canvas.drawCircle(50, 50, 39, paint);
-        canvas.flush();
 
         fBitmap.extractAlpha(&fAlpha);
     }

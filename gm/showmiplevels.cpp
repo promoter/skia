@@ -5,17 +5,24 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "sk_tool_utils.h"
+#include "gm/gm.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkColorPriv.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPixmap.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/private/SkNx.h"
+#include "src/core/SkMipMap.h"
+#include "tools/ToolUtils.h"
 
-#include "Resources.h"
-#include "SkBitmapScaler.h"
-#include "SkGradientShader.h"
-#include "SkTypeface.h"
-#include "SkStream.h"
-#include "SkPaint.h"
-#include "SkMipMap.h"
-#include "Resources.h"
+#include <math.h>
 
 #define SHOW_MIP_COLOR  0xFF000000
 
@@ -51,7 +58,6 @@ static SkBitmap make_bitmap2(int w, int h) {
     return bm;
 }
 
-#include "SkNx.h"
 static SkBitmap make_bitmap3(int w, int h) {
     SkBitmap bm;
     bm.allocN32Pixels(w, h);
@@ -93,7 +99,6 @@ public:
 
     static void apply_gamma(const SkBitmap& bm) {
         return; // below is our experiment for sRGB correction
-        bm.lockPixels();
         for (int y = 0; y < bm.height(); ++y) {
             for (int x = 0; x < bm.width(); ++x) {
                 SkPMColor c = *bm.getAddr32(x, y);
@@ -115,13 +120,11 @@ protected:
         return str;
     }
 
-    SkISize onISize() override {
-        return { 824, 862 };
-    }
+    SkISize onISize() override { return { 150, 862 }; }
 
     static void DrawAndFrame(SkCanvas* canvas, const SkBitmap& orig, SkScalar x, SkScalar y) {
         SkBitmap bm;
-        orig.copyTo(&bm);
+        ToolUtils::copy_to(&bm, orig.colorType(), orig);
         apply_gamma(bm);
 
         canvas->drawBitmap(bm, x, y, nullptr);
@@ -136,11 +139,9 @@ protected:
         SkScalar y = 4;
 
         SkPixmap prevPM;
-        baseBM.lockPixels();
         baseBM.peekPixels(&prevPM);
 
-        SkDestinationSurfaceColorMode colorMode = SkDestinationSurfaceColorMode::kLegacy;
-        sk_sp<SkMipMap> mm(SkMipMap::Build(baseBM, colorMode, nullptr));
+        sk_sp<SkMipMap> mm(SkMipMap::Build(baseBM, nullptr));
 
         int index = 0;
         SkMipMap::Level level;
@@ -171,30 +172,10 @@ protected:
             bm.installPixels(curr);
             return bm;
         });
-
-        const SkBitmapScaler::ResizeMethod methods[] = {
-            SkBitmapScaler::RESIZE_BOX,
-            SkBitmapScaler::RESIZE_TRIANGLE,
-            SkBitmapScaler::RESIZE_LANCZOS3,
-            SkBitmapScaler::RESIZE_HAMMING,
-            SkBitmapScaler::RESIZE_MITCHELL,
-        };
-
-        SkPixmap basePM;
-        orig.lockPixels();
-        orig.peekPixels(&basePM);
-        for (auto method : methods) {
-            canvas->translate(orig.width()/2 + 8.0f, 0);
-            drawLevels(canvas, orig, [method](const SkPixmap& prev, const SkPixmap& curr) {
-                SkBitmap bm;
-                SkBitmapScaler::Resize(&bm, prev, method, curr.width(), curr.height());
-                return bm;
-            });
-        }
     }
 
     void onOnceBeforeDraw() override {
-        fBM[0] = sk_tool_utils::create_checkerboard_bitmap(fN, fN, SK_ColorBLACK, SK_ColorWHITE, 2);
+        fBM[0] = ToolUtils::create_checkerboard_bitmap(fN, fN, SK_ColorBLACK, SK_ColorWHITE, 2);
         fBM[1] = make_bitmap(fN, fN);
         fBM[2] = make_bitmap2(fN, fN);
         fBM[3] = make_bitmap3(fN, fN);
@@ -204,7 +185,10 @@ protected:
         canvas->translate(4, 4);
         for (const auto& bm : fBM) {
             this->drawSet(canvas, bm);
-            canvas->translate(0, bm.height() * 0.85f);
+            // round so we always produce an integral translate, so the GOLD tool won't show
+            // unimportant diffs if this is drawn on a GPU with different rounding rules
+            // since we draw the bitmaps using nearest-neighbor
+            canvas->translate(0, SkScalarRoundToScalar(bm.height() * 0.85f));
         }
     }
 
@@ -218,10 +202,17 @@ DEF_GM( return new ShowMipLevels(256); )
 
 void copy_to(SkBitmap* dst, SkColorType dstColorType, const SkBitmap& src) {
     if (kGray_8_SkColorType == dstColorType) {
-        return sk_tool_utils::copy_to_g8(dst, src);
+        return ToolUtils::copy_to_g8(dst, src);
     }
 
-    src.copyTo(dst, dstColorType);
+    const SkBitmap* srcPtr = &src;
+    SkBitmap tmp(src);
+    if (kRGB_565_SkColorType == dstColorType) {
+        tmp.setAlphaType(kOpaque_SkAlphaType);
+        srcPtr = &tmp;
+    }
+
+    ToolUtils::copy_to(dst, dstColorType, *srcPtr);
 }
 
 /**
@@ -258,8 +249,7 @@ protected:
         SkScalar x = 4;
         SkScalar y = 4;
 
-        SkDestinationSurfaceColorMode colorMode = SkDestinationSurfaceColorMode::kLegacy;
-        sk_sp<SkMipMap> mm(SkMipMap::Build(baseBM, colorMode, nullptr));
+        sk_sp<SkMipMap> mm(SkMipMap::Build(baseBM, nullptr));
 
         int index = 0;
         SkMipMap::Level level;
@@ -298,8 +288,7 @@ protected:
     }
 
     void onOnceBeforeDraw() override {
-        fBM[0] = sk_tool_utils::create_checkerboard_bitmap(fW, fH,
-                                                           SHOW_MIP_COLOR, SK_ColorWHITE, 2);
+        fBM[0] = ToolUtils::create_checkerboard_bitmap(fW, fH, SHOW_MIP_COLOR, SK_ColorWHITE, 2);
         fBM[1] = make_bitmap(fW, fH);
         fBM[2] = make_bitmap2(fW, fH);
         fBM[3] = make_bitmap3(fW, fH);

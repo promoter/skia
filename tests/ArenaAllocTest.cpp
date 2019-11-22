@@ -5,9 +5,14 @@
  * found in the LICENSE file.
  */
 
-#include "Test.h"
-#include "SkArenaAlloc.h"
-#include "SkRefCnt.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkTypes.h"
+#include "src/core/SkArenaAlloc.h"
+#include "tests/Test.h"
+
+#include <memory>
+#include <new>
+#include <type_traits>
 
 namespace {
 
@@ -68,7 +73,7 @@ DEF_TEST(ArenaAlloc, r) {
         created = 0;
         destroyed = 0;
 
-        SkArenaAlloc arena{nullptr, 0};
+        SkArenaAlloc arena{0};
         REPORTER_ASSERT(r, *arena.make<int>(3) == 3);
         Foo* foo = arena.make<Foo>(3, 4.0f);
         REPORTER_ASSERT(r, foo->x == 3);
@@ -93,8 +98,7 @@ DEF_TEST(ArenaAlloc, r) {
     {
         created = 0;
         destroyed = 0;
-        char block[64];
-        SkArenaAlloc arena{block};
+        SkSTArenaAlloc<64> arena;
 
         REPORTER_ASSERT(r, *arena.make<int>(3) == 3);
         Foo* foo = arena.make<Foo>(3, 4.0f);
@@ -121,7 +125,7 @@ DEF_TEST(ArenaAlloc, r) {
         created = 0;
         destroyed = 0;
         std::unique_ptr<char[]> block{new char[1024]};
-        SkArenaAlloc arena{block.get(), 1024};
+        SkArenaAlloc arena{block.get(), 1024, 0};
 
         REPORTER_ASSERT(r, *arena.make<int>(3) == 3);
         Foo* foo = arena.make<Foo>(3, 4.0f);
@@ -145,8 +149,7 @@ DEF_TEST(ArenaAlloc, r) {
     REPORTER_ASSERT(r, destroyed == 11);
 
     {
-        char storage[64];
-        SkArenaAlloc arena{storage};
+        SkSTArenaAlloc<64> arena;
         arena.makeArrayDefault<char>(256);
         arena.reset();
         arena.reset();
@@ -155,8 +158,7 @@ DEF_TEST(ArenaAlloc, r) {
     {
         created = 0;
         destroyed = 0;
-        char storage[64];
-        SkArenaAlloc arena{storage};
+        SkSTArenaAlloc<64> arena;
 
         Start start;
         Node* current = nullptr;
@@ -170,18 +172,4 @@ DEF_TEST(ArenaAlloc, r) {
     REPORTER_ASSERT(r, created == 128);
     REPORTER_ASSERT(r, destroyed == 128);
 
-    {
-        created = 0;
-        destroyed = 0;
-        char storage[64];
-        SkArenaAlloc arena{storage};
-
-        sk_sp<FooRefCnt> f = arena.makeSkSp<FooRefCnt>(4, 5.0f);
-        REPORTER_ASSERT(r, f->x == 4);
-        REPORTER_ASSERT(r, f->y == 5.0f);
-        REPORTER_ASSERT(r, created == 1);
-        REPORTER_ASSERT(r, destroyed == 0);
-    }
-    REPORTER_ASSERT(r, created == 1);
-    REPORTER_ASSERT(r, destroyed == 1);
 }

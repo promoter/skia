@@ -5,9 +5,9 @@
  * found in the LICENSE file.
  */
 
-#include "SkDiscardableMemory.h"
-#include "SkResourceCache.h"
-#include "Test.h"
+#include "src/core/SkDiscardableMemory.h"
+#include "src/core/SkResourceCache.h"
+#include "tests/Test.h"
 
 namespace {
 static void* gGlobalAddress;
@@ -105,7 +105,7 @@ static void test_cache_purge_shared_id(skiatest::Reporter* reporter, SkResourceC
     }
 }
 
-#include "SkDiscardableMemoryPool.h"
+#include "src/lazy/SkDiscardableMemoryPool.h"
 
 static SkDiscardableMemoryPool* gPool;
 static SkDiscardableMemory* pool_factory(size_t bytes) {
@@ -121,7 +121,7 @@ DEF_TEST(ImageCache, reporter) {
         test_cache(reporter, cache, true);
     }
     {
-        sk_sp<SkDiscardableMemoryPool> pool(SkDiscardableMemoryPool::Create(defLimit, nullptr));
+        sk_sp<SkDiscardableMemoryPool> pool(SkDiscardableMemoryPool::Make(defLimit));
         gPool = pool.get();
         SkResourceCache cache(pool_factory);
         test_cache(reporter, cache, true);

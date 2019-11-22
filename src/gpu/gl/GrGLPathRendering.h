@@ -8,11 +8,12 @@
 #ifndef GrGLPathRendering_DEFINED
 #define GrGLPathRendering_DEFINED
 
-#include "SkRefCnt.h"
-#include "GrPathRendering.h"
-#include "GrStencilSettings.h"
-#include "gl/GrGLTypes.h"
-#include "glsl/GrGLSLUtil.h"
+#include "include/core/SkRefCnt.h"
+#include "include/gpu/gl/GrGLTypes.h"
+#include "src/gpu/GrGpu.h"
+#include "src/gpu/GrPathRendering.h"
+#include "src/gpu/GrStencilSettings.h"
+#include "src/gpu/glsl/GrGLSLUtil.h"
 
 class GrGLNameAllocator;
 class GrGLGpu;
@@ -34,9 +35,7 @@ public:
     ~GrGLPathRendering() override;
 
     // GrPathRendering implementations.
-    GrPath* createPath(const SkPath&, const GrStyle&) override;
-    virtual GrPathRange* createPathRange(GrPathRange::PathGenerator*,
-                                         const GrStyle&) override;
+    sk_sp<GrPath> createPath(const SkPath&, const GrStyle&) override;
 
     /* Called when the 3D context state is unknown. */
     void resetContext();
@@ -66,19 +65,9 @@ public:
 
 protected:
     void onStencilPath(const StencilPathArgs&, const GrPath*) override;
-    void onDrawPath(const GrPipeline&,
-                    const GrPrimitiveProcessor&,
-                    const GrStencilSettings&,
+    void onDrawPath(GrRenderTarget*, const GrProgramInfo&, const GrStencilSettings&,
                     const GrPath*) override;
-    void onDrawPaths(const GrPipeline&,
-                     const GrPrimitiveProcessor&,
-                     const GrStencilSettings&,
-                     const GrPathRange*,
-                     const void* indices,
-                     PathIndexType,
-                     const float transformValues[],
-                     PathTransformType,
-                     int count) override;
+
 private:
     /**
      * Mark certain functionality as not supported.

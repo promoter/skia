@@ -8,16 +8,23 @@
 #ifndef GrRegionOp_DEFINED
 #define GrRegionOp_DEFINED
 
-#include "GrColor.h"
-#include "SkRefCnt.h"
+#include "include/private/GrTypesPriv.h"
 
-class GrLegacyMeshDrawOp;
+class GrDrawOp;
+class GrRecordingContext;
 class SkMatrix;
 class SkRegion;
+class GrPaint;
+struct GrUserStencilSettings;
 
 namespace GrRegionOp {
-std::unique_ptr<GrLegacyMeshDrawOp> Make(GrColor color, const SkMatrix& viewMatrix,
-                                         const SkRegion& region);
+/** GrAAType must be kNone or kMSAA. */
+std::unique_ptr<GrDrawOp> Make(GrRecordingContext*,
+                               GrPaint&&,
+                               const SkMatrix& viewMatrix,
+                               const SkRegion&,
+                               GrAAType,
+                               const GrUserStencilSettings* stencilSettings = nullptr);
 }
 
 #endif

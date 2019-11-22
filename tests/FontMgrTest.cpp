@@ -5,52 +5,48 @@
  * found in the LICENSE file.
  */
 
-#include "SkCommandLineFlags.h"
-#include "SkFontMgr.h"
-#include "SkTypeface.h"
-#include "Test.h"
-
-#include "SkFont.h"
-#include "SkPaint.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkTypeface.h"
+#include "src/core/SkAdvancedTypefaceMetrics.h"
+#include "tests/Test.h"
+#include "tools/flags/CommandLineFlags.h"
 
 #include <initializer_list>
 #include <limits>
 #include <vector>
 
 static void test_font(skiatest::Reporter* reporter) {
-    uint32_t flags = 0;
-    sk_sp<SkFont> font(SkFont::Make(nullptr, 24, SkFont::kA8_MaskType, flags));
+    SkFont font(nullptr, 24);
 
-    REPORTER_ASSERT(reporter, font->getTypeface());
-    REPORTER_ASSERT(reporter, 24 == font->getSize());
-    REPORTER_ASSERT(reporter, 1 == font->getScaleX());
-    REPORTER_ASSERT(reporter, 0 == font->getSkewX());
-    REPORTER_ASSERT(reporter, SkFont::kA8_MaskType == font->getMaskType());
+    //REPORTER_ASSERT(reporter, SkTypeface::GetDefaultTypeface() == font.getTypeface());
+    REPORTER_ASSERT(reporter, 24 == font.getSize());
+    REPORTER_ASSERT(reporter, 1 == font.getScaleX());
+    REPORTER_ASSERT(reporter, 0 == font.getSkewX());
 
     uint16_t glyphs[5];
     sk_bzero(glyphs, sizeof(glyphs));
 
-    int count = font->textToGlyphs("Hello", 5, kUTF8_SkTextEncoding, glyphs, SK_ARRAY_COUNT(glyphs));
-
+    // Check that no glyphs are copied with insufficient storage.
+    int count = font.textToGlyphs("Hello", 5, SkTextEncoding::kUTF8, glyphs, 2);
     REPORTER_ASSERT(reporter, 5 == count);
+    for (const auto glyph : glyphs) { REPORTER_ASSERT(reporter, glyph == 0); }
+
+    SkAssertResult(font.textToGlyphs("Hello", 5, SkTextEncoding::kUTF8, glyphs,
+                                     SK_ARRAY_COUNT(glyphs)) == count);
+
     for (int i = 0; i < count; ++i) {
         REPORTER_ASSERT(reporter, 0 != glyphs[i]);
     }
     REPORTER_ASSERT(reporter, glyphs[0] != glyphs[1]); // 'h' != 'e'
     REPORTER_ASSERT(reporter, glyphs[2] == glyphs[3]); // 'l' == 'l'
 
-    sk_sp<SkFont> newFont(font->makeWithSize(36));
-    REPORTER_ASSERT(reporter, newFont.get());
-    REPORTER_ASSERT(reporter, font->getTypeface() == newFont->getTypeface());
-    REPORTER_ASSERT(reporter, 36 == newFont->getSize());   // double check we haven't changed
-    REPORTER_ASSERT(reporter, 24 == font->getSize());   // double check we haven't changed
-
-    SkPaint paint;
-    paint.setTextSize(18);
-    font = SkFont::Testing_CreateFromPaint(paint);
-    REPORTER_ASSERT(reporter, font.get());
-    REPORTER_ASSERT(reporter, font->getSize() == paint.getTextSize());
-    REPORTER_ASSERT(reporter, SkFont::kBW_MaskType == font->getMaskType());
+    const SkFont newFont(font.makeWithSize(36));
+    REPORTER_ASSERT(reporter, font.getTypefaceOrDefault() == newFont.getTypefaceOrDefault());
+    REPORTER_ASSERT(reporter, 36 == newFont.getSize());   // double check we haven't changed
+    REPORTER_ASSERT(reporter, 24 == font.getSize());   // double check we haven't changed
 }
 
 /*
@@ -114,6 +110,12 @@ static void test_fontiter(skiatest::Reporter* reporter, bool verbose) {
     }
 }
 
+static void test_match(skiatest::Reporter* reporter) {
+    sk_sp<SkFontMgr> fm(SkFontMgr::RefDefault());
+    sk_sp<SkFontStyleSet> styleSet(fm->matchFamily(nullptr));
+    REPORTER_ASSERT(reporter, styleSet);
+}
+
 static void test_matchStyleCSS3(skiatest::Reporter* reporter) {
     static const SkFontStyle invalidFontStyle(101, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
 
@@ -121,24 +123,25 @@ static void test_matchStyleCSS3(skiatest::Reporter* reporter) {
     public:
         TestTypeface(const SkFontStyle& fontStyle) : SkTypeface(fontStyle, false){}
     protected:
-        SkStreamAsset* onOpenStream(int* ttcIndex) const override { return nullptr; }
+        std::unique_ptr<SkStreamAsset> onOpenStream(int* ttcIndex) const override { return nullptr; }
+        sk_sp<SkTypeface> onMakeClone(const SkFontArguments& args) const override {
+            return sk_ref_sp(this);
+        }
         SkScalerContext* onCreateScalerContext(const SkScalerContextEffects&,
                                                const SkDescriptor*) const override {
             return nullptr;
         }
         void onFilterRec(SkScalerContextRec*) const override { }
-        virtual SkAdvancedTypefaceMetrics* onGetAdvancedTypefaceMetrics(
-            PerGlyphInfo,
-            const uint32_t*, uint32_t) const override { return nullptr; }
+        std::unique_ptr<SkAdvancedTypefaceMetrics> onGetAdvancedMetrics() const override {
+            return nullptr;
+        }
         void onGetFontDescriptor(SkFontDescriptor*, bool*) const override { }
-        virtual int onCharsToGlyphs(const void* chars, Encoding encoding,
-            uint16_t glyphs[], int glyphCount) const override {
-            if (glyphs && glyphCount > 0) {
-                sk_bzero(glyphs, glyphCount * sizeof(glyphs[0]));
-            }
-            return 0;
+        void onCharsToGlyphs(const SkUnichar* chars, int count, SkGlyphID glyphs[]) const override {
+            sk_bzero(glyphs, count * sizeof(glyphs[0]));
         }
         int onCountGlyphs() const override { return 0; }
+        void getPostScriptGlyphNames(SkString*) const override {}
+        void getGlyphToUnicodeMap(SkUnichar*) const override {}
         int onGetUPEM() const override { return 0; }
         class EmptyLocalizedStrings : public SkTypeface::LocalizedStrings {
         public:
@@ -155,6 +158,11 @@ static void test_matchStyleCSS3(skiatest::Reporter* reporter) {
                 int coordinateCount) const override
         {
             return 0;
+        }
+        int onGetVariationDesignParameters(SkFontParameters::Variation::Axis parameters[],
+                                           int parameterCount) const override
+        {
+            return -1;
         }
         int onGetTableTags(SkFontTableTag tags[]) const override { return 0; }
         size_t onGetTableData(SkFontTableTag, size_t, size_t, void*) const override {
@@ -198,13 +206,10 @@ static void test_matchStyleCSS3(skiatest::Reporter* reporter) {
     SkFontStyle  expanded_obliqu_900(SkFontStyle::kBlack_Weight, SkFontStyle::kExpanded_Width,  SkFontStyle::kOblique_Slant);
 
     SkFontStyle normal_normal_100(SkFontStyle::kThin_Weight,       SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
-    SkFontStyle normal_normal_200(SkFontStyle::kExtraLight_Weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
     SkFontStyle normal_normal_300(SkFontStyle::kLight_Weight,      SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
     SkFontStyle normal_normal_400(SkFontStyle::kNormal_Weight,     SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
     SkFontStyle normal_normal_500(SkFontStyle::kMedium_Weight,     SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
     SkFontStyle normal_normal_600(SkFontStyle::kSemiBold_Weight,   SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
-    SkFontStyle normal_normal_700(SkFontStyle::kBold_Weight,       SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
-    SkFontStyle normal_normal_800(SkFontStyle::kExtraBold_Weight,  SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
     SkFontStyle normal_normal_900(SkFontStyle::kBlack_Weight,      SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant);
 
     struct StyleSetTest {
@@ -215,6 +220,23 @@ static void test_matchStyleCSS3(skiatest::Reporter* reporter) {
         };
         std::vector<Case> cases;
     } tests[] = {
+        {
+            { normal_normal_500, normal_normal_400 },
+            {
+                { normal_normal_400, normal_normal_400 },
+                { normal_normal_500, normal_normal_500 },
+            },
+        },
+
+        {
+            { normal_normal_500, normal_normal_300 },
+            {
+                { normal_normal_300, normal_normal_300 },
+                { normal_normal_400, normal_normal_500 },
+                { normal_normal_500, normal_normal_500 },
+            },
+        },
+
         {
             { condensed_normal_100,condensed_normal_900,condensed_italic_100,condensed_italic_900,
                expanded_normal_100, expanded_normal_900, expanded_italic_100, expanded_italic_900 },
@@ -710,6 +732,7 @@ static void test_matchStyleCSS3(skiatest::Reporter* reporter) {
 DEFINE_bool(verboseFontMgr, false, "run verbose fontmgr tests.");
 
 DEF_TEST(FontMgr, reporter) {
+    test_match(reporter);
     test_matchStyleCSS3(reporter);
     test_fontiter(reporter, FLAGS_verboseFontMgr);
     test_alias_names(reporter);

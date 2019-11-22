@@ -7,9 +7,9 @@
 #ifndef SkOpContour_DEFINED
 #define SkOpContour_DEFINED
 
-#include "SkOpSegment.h"
-#include "SkTDArray.h"
-#include "SkTSort.h"
+#include "include/private/SkTDArray.h"
+#include "src/core/SkTSort.h"
+#include "src/pathops/SkOpSegment.h"
 
 enum class SkOpRayDir;
 struct SkOpRayHit;
@@ -45,8 +45,8 @@ public:
     }
 
     SkOpSegment& appendSegment() {
-        SkOpSegment* result = fCount++
-            ? SkOpTAllocator<SkOpSegment>::Allocate(this->globalState()->allocator()) : &fHead;
+        SkOpSegment* result = fCount++ ? this->globalState()->allocator()->make<SkOpSegment>()
+                                       : &fHead;
         result->setPrev(fTail);
         if (fTail) {
             fTail->setNext(result);
@@ -281,7 +281,7 @@ public:
         fNext = nullptr;
         fCount = 0;
         fDone = false;
-        SkDEBUGCODE(fBounds.set(SK_ScalarMax, SK_ScalarMax, SK_ScalarMin, SK_ScalarMin));
+        SkDEBUGCODE(fBounds.setLTRB(SK_ScalarMax, SK_ScalarMax, SK_ScalarMin, SK_ScalarMin));
         SkDEBUGCODE(fFirstSorted = -1);
         SkDEBUGCODE(fDebugIndent = 0);
     }
@@ -391,7 +391,7 @@ protected:
 class SkOpContourHead : public SkOpContour {
 public:
     SkOpContour* appendContour() {
-        SkOpContour* contour = SkOpTAllocator<SkOpContour>::New(this->globalState()->allocator());
+        SkOpContour* contour = this->globalState()->allocator()->make<SkOpContour>();
         contour->setNext(nullptr);
         SkOpContour* prev = this;
         SkOpContour* next;

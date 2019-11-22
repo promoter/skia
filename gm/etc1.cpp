@@ -5,25 +5,31 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "sk_tool_utils.h"
-#include "SkRandom.h"
+#include "include/core/SkTypes.h" // IWYU pragma: keep
 
-#if SK_SUPPORT_GPU
-#include "etc1.h"
+#if !defined(SK_BUILD_FOR_GOOGLE3)
 
-#include "GrContext.h"
-#include "GrRenderTargetContext.h"
-#include "GrRenderTargetContextPriv.h"
-#include "GrTextureProxy.h"
-#include "effects/GrSimpleTextureEffect.h"
-#include "ops/GrRectOpFactory.h"
+#include "gm/gm.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkData.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "third_party/etc1/etc1.h"
+
+class GrContext;
+class GrRenderTargetContext;
 
 // Basic test of Ganesh's ETC1 support
-class ETC1GM : public skiagm::GM {
+class ETC1GM : public skiagm::GpuGM {
 public:
     ETC1GM() {
-        this->setBGColor(sk_tool_utils::color_to_565(0xFFCCCCCC));
+        this->setBGColor(0xFFCCCCCC);
     }
 
 protected:
@@ -35,8 +41,6 @@ protected:
         return SkISize::Make(kTexWidth + 2*kPad, kTexHeight + 2*kPad);
     }
 
-    // TODO: we should be creating an ETC1 SkData blob here and going through SkImageCacherator.
-    // That will require an ETC1 Codec though - so for later.
     void onOnceBeforeDraw() override {
         SkBitmap bm;
         SkImageInfo ii = SkImageInfo::Make(kTexWidth, kTexHeight, kRGB_565_SkColorType,
@@ -52,57 +56,22 @@ protected:
         }
 
         int size = etc1_get_encoded_data_size(bm.width(), bm.height());
-        fETC1Data.reset(size);
+        fETC1Data = SkData::MakeUninitialized(size);
 
-        unsigned char* pixels = (unsigned char*) fETC1Data.get();
+        unsigned char* pixels = (unsigned char*) fETC1Data->writable_data();
 
         if (etc1_encode_image((unsigned char*) bm.getAddr16(0, 0),
                               bm.width(), bm.height(), 2, bm.rowBytes(), pixels)) {
-            fETC1Data.reset();
+            fETC1Data = nullptr;
         }
     }
 
-    void onDraw(SkCanvas* canvas) override {
-        GrRenderTargetContext* renderTargetContext =
-            canvas->internal_private_accessTopLayerRenderTargetContext();
-        if (!renderTargetContext) {
-            skiagm::GM::DrawGpuOnlyMessage(canvas);
-            return;
-        }
+    void onDraw(GrContext* context, GrRenderTargetContext*, SkCanvas* canvas) override {
+        sk_sp<SkImage> image = SkImage::MakeFromCompressed(context, fETC1Data,
+                                                           kTexWidth, kTexHeight,
+                                                           SkImage::kETC1_CompressionType);
 
-        GrContext* context = canvas->getGrContext();
-        if (!context) {
-            return;
-        }
-
-        GrSurfaceDesc desc;
-        desc.fConfig = kETC1_GrPixelConfig;
-        desc.fWidth = kTexWidth;
-        desc.fHeight = kTexHeight;
-
-        sk_sp<GrTextureProxy> proxy = GrSurfaceProxy::MakeDeferred(context->resourceProvider(),
-                                                                   desc, SkBudgeted::kYes,
-                                                                   fETC1Data.get(), 0);
-        if (!proxy) {
-            return;
-        }
-
-        const SkMatrix trans = SkMatrix::MakeTrans(-kPad, -kPad);
-
-        sk_sp<GrFragmentProcessor> fp = GrSimpleTextureEffect::Make(context->resourceProvider(),
-                                                                    std::move(proxy),
-                                                                    nullptr, trans);
-
-        GrPaint grPaint;
-        grPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrc));
-        grPaint.addColorFragmentProcessor(std::move(fp));
-
-        SkRect rect = SkRect::MakeXYWH(kPad, kPad, kTexWidth, kTexHeight);
-
-        std::unique_ptr<GrLegacyMeshDrawOp> op(GrRectOpFactory::MakeNonAAFill(
-                GrColor_WHITE, SkMatrix::I(), rect, nullptr, nullptr));
-        renderTargetContext->priv().testingOnly_addLegacyMeshDrawOp(
-                std::move(grPaint), GrAAType::kNone, std::move(op));
+        canvas->drawImage(image, 0, 0);
     }
 
 private:
@@ -110,7 +79,7 @@ private:
     static const int kTexWidth = 16;
     static const int kTexHeight = 20;
 
-    SkAutoTMalloc<char> fETC1Data;
+    sk_sp<SkData> fETC1Data;
 
     typedef GM INHERITED;
 };

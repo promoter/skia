@@ -5,59 +5,14 @@
  * found in the LICENSE file.
  */
 
-#include "Benchmark.h"
-#include "SkBitmap.h"
-#include "SkCanvas.h"
-#include "SkColorPriv.h"
-#include "SkPaint.h"
-#include "SkRandom.h"
-#include "SkString.h"
-#include "sk_tool_utils.h"
-
-static int conv6ToByte(int x) {
-    return x * 0xFF / 5;
-}
-
-static int convByteTo6(int x) {
-    return x * 5 / 255;
-}
-
-static uint8_t compute666Index(SkPMColor c) {
-    int r = SkGetPackedR32(c);
-    int g = SkGetPackedG32(c);
-    int b = SkGetPackedB32(c);
-
-    return convByteTo6(r) * 36 + convByteTo6(g) * 6 + convByteTo6(b);
-}
-
-static void convertToIndex666(const SkBitmap& src, SkBitmap* dst, SkAlphaType aType) {
-    SkPMColor storage[216];
-    SkPMColor* colors = storage;
-    // rrr ggg bbb
-    for (int r = 0; r < 6; r++) {
-        int rr = conv6ToByte(r);
-        for (int g = 0; g < 6; g++) {
-            int gg = conv6ToByte(g);
-            for (int b = 0; b < 6; b++) {
-                int bb = conv6ToByte(b);
-                *colors++ = SkPreMultiplyARGB(0xFF, rr, gg, bb);
-            }
-        }
-    }
-    dst->allocPixels(SkImageInfo::Make(src.width(), src.height(), kIndex_8_SkColorType, aType),
-                     SkColorTable::Make(storage, 216));
-
-    SkAutoLockPixels alps(src);
-    SkAutoLockPixels alpd(*dst);
-
-    for (int y = 0; y < src.height(); y++) {
-        const SkPMColor* srcP = src.getAddr32(0, y);
-        uint8_t* dstP = dst->getAddr8(0, y);
-        for (int x = src.width() - 1; x >= 0; --x) {
-            *dstP++ = compute666Index(*srcP++);
-        }
-    }
-}
+#include "bench/Benchmark.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColorPriv.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkString.h"
+#include "include/utils/SkRandom.h"
+#include "tools/ToolUtils.h"
 
 /*  Variants for bitmaps
 
@@ -93,7 +48,8 @@ public:
 protected:
     const char* onGetName() override {
         fName.set("bitmap");
-        fName.appendf("_%s%s", sk_tool_utils::colortype_name(fColorType),
+        fName.appendf("_%s%s",
+                      ToolUtils::colortype_name(fColorType),
                       kOpaque_SkAlphaType == fAlphaType ? "" : "_A");
         if (fDoScale) {
             fName.append("_scale");
@@ -111,21 +67,12 @@ protected:
     void onDelayedSetup() override {
         SkBitmap bm;
 
-        if (kIndex_8_SkColorType == fColorType) {
-            bm.allocPixels(SkImageInfo::MakeN32(W, H, fAlphaType));
-        } else {
-            bm.allocPixels(SkImageInfo::Make(W, H, fColorType, fAlphaType));
-        }
+        bm.allocPixels(SkImageInfo::Make(W, H, fColorType, fAlphaType));
         bm.eraseColor(kOpaque_SkAlphaType == fAlphaType ? SK_ColorBLACK : 0);
 
         this->onDrawIntoBitmap(bm);
 
-        if (kIndex_8_SkColorType == fColorType) {
-            convertToIndex666(bm, &fBitmap, fAlphaType);
-        } else {
-            fBitmap = bm;
-        }
-
+        fBitmap = bm;
         fBitmap.setIsVolatile(fIsVolatile);
     }
 
@@ -166,7 +113,7 @@ protected:
                           SkIntToScalar(SkMin32(w, h))*3/8, p);
 
         SkRect r;
-        r.set(0, 0, SkIntToScalar(w), SkIntToScalar(h));
+        r.setWH(SkIntToScalar(w), SkIntToScalar(h));
         p.setStyle(SkPaint::kStroke_Style);
         p.setStrokeWidth(SkIntToScalar(4));
         p.setColor(SK_ColorBLUE);
@@ -231,7 +178,7 @@ protected:
 
             canvas->translate(x, y);
             // just enough so we can't take the sprite case
-            canvas->scale(SK_Scalar1 * 99/100, SK_Scalar1 * 99/100);
+            canvas->scale(1.1f, 1.1f);
             canvas->translate(-x, -y);
         }
         if (fFlags & kRotate_Flag) {
@@ -319,7 +266,7 @@ protected:
             SkRect r;
             for (int x = 0; x < w; x+=2)
             {
-                r.set(SkIntToScalar(x), 0, SkIntToScalar(x+1), SkIntToScalar(h));
+                r.setLTRB(SkIntToScalar(x), 0, SkIntToScalar(x+1), SkIntToScalar(h));
                 canvas.drawRect(r, p);
             }
 
@@ -344,7 +291,7 @@ protected:
                 } else if (x % 3 == 2) {
                     p.setColor(SK_ColorRED); // Opaque
                 }
-                r.set(SkIntToScalar(x), 0, SkIntToScalar(x+1), SkIntToScalar(h));
+                r.setLTRB(SkIntToScalar(x), 0, SkIntToScalar(x+1), SkIntToScalar(h));
                 canvas.drawRect(r, p);
             }
         }
@@ -358,8 +305,6 @@ DEF_BENCH( return new BitmapBench(kN32_SkColorType, kPremul_SkAlphaType, false, 
 DEF_BENCH( return new BitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, false, false, false); )
 DEF_BENCH( return new BitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, false, false, true); )
 DEF_BENCH( return new BitmapBench(kRGB_565_SkColorType, kOpaque_SkAlphaType, false, false, false); )
-DEF_BENCH( return new BitmapBench(kIndex_8_SkColorType, kPremul_SkAlphaType, false, false, false); )
-DEF_BENCH( return new BitmapBench(kIndex_8_SkColorType, kOpaque_SkAlphaType, false, false, false); )
 DEF_BENCH( return new BitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, true, true, false); )
 DEF_BENCH( return new BitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, true, false, false); )
 
@@ -368,6 +313,10 @@ DEF_BENCH( return new FilterBitmapBench(kN32_SkColorType, kPremul_SkAlphaType, f
 DEF_BENCH( return new FilterBitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, false, false, kScale_Flag | kBilerp_Flag); )
 DEF_BENCH( return new FilterBitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, true, true, kScale_Flag | kBilerp_Flag); )
 DEF_BENCH( return new FilterBitmapBench(kN32_SkColorType, kOpaque_SkAlphaType, true, false, kScale_Flag | kBilerp_Flag); )
+
+// The following two cases test the performance regression of b/70172912 .
+DEF_BENCH( return new FilterBitmapBench(kRGB_565_SkColorType, kOpaque_SkAlphaType, false, false, kScale_Flag | kBilerp_Flag); )
+DEF_BENCH( return new BitmapBench(kRGB_565_SkColorType, kOpaque_SkAlphaType, false, false, true); )
 
 // scale rotate filter -> S32_opaque_D32_filter_DXDY_{SSE2,SSSE3}
 DEF_BENCH( return new FilterBitmapBench(kN32_SkColorType, kPremul_SkAlphaType, false, false, kScale_Flag | kRotate_Flag | kBilerp_Flag); )

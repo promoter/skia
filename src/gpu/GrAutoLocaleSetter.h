@@ -8,10 +8,11 @@
 #ifndef GrAutoLocaleSetter_DEFINED
 #define GrAutoLocaleSetter_DEFINED
 
-#include "GrTypes.h"
+#include "include/gpu/GrTypes.h"
+#include "include/private/SkNoncopyable.h"
 
 #if defined(SK_BUILD_FOR_WIN)
-#include "SkString.h"
+#include "include/core/SkString.h"
 #endif
 
 #if !defined(SK_BUILD_FOR_ANDROID)
@@ -20,6 +21,7 @@
 
 #if defined(SK_BUILD_FOR_MAC) || defined(SK_BUILD_FOR_IOS)
 #include <xlocale.h>
+#include <cstring>
 #define HAVE_XLOCALE 1
 #else
 #define HAVE_XLOCALE 0
@@ -54,11 +56,11 @@ public:
             name = nullptr;
         }
 #endif
-        fLocale = newlocale(LC_ALL, name, 0);
+        fLocale = newlocale(LC_ALL_MASK, name, nullptr);
         if (fLocale) {
             fOldLocale = uselocale(fLocale);
         } else {
-            fOldLocale = static_cast<locale_t>(0);
+            fOldLocale = static_cast<locale_t>(nullptr);
         }
 #else
         (void) name; // suppress unused param warning.

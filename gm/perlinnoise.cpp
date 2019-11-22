@@ -5,24 +5,36 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "SkPerlinNoiseShader.h"
+#include "gm/gm.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkMatrix.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkShader.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/effects/SkPerlinNoiseShader.h"
+
+#include <utility>
+
+namespace {
+
+enum class Type {
+    kFractalNoise,
+    kTurbulence,
+};
 
 class PerlinNoiseGM : public skiagm::GM {
-public:
-    PerlinNoiseGM() {
-        this->setBGColor(0xFF000000);
-        fSize = SkISize::Make(80, 80);
-    }
+    SkISize fSize = {80, 80};
 
-protected:
-    virtual SkString onShortName() {
-        return SkString("perlinnoise");
-    }
+    void onOnceBeforeDraw() override { this->setBGColor(0xFF000000); }
 
-    virtual SkISize onISize() {
-        return SkISize::Make(200, 500);
-    }
+    SkString onShortName() override { return SkString("perlinnoise"); }
+
+    SkISize onISize() override { return {200, 500}; }
 
     void drawRect(SkCanvas* canvas, int x, int y, const SkPaint& paint, const SkISize& size) {
         canvas->save();
@@ -33,11 +45,11 @@ protected:
         canvas->restore();
     }
 
-    void test(SkCanvas* canvas, int x, int y, SkPerlinNoiseShader::Type type,
+    void test(SkCanvas* canvas, int x, int y, Type type,
               float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed,
               bool stitchTiles) {
         SkISize tileSize = SkISize::Make(fSize.width() / 2, fSize.height() / 2);
-        sk_sp<SkShader> shader = (type == SkPerlinNoiseShader::kFractalNoise_Type) ?
+        sk_sp<SkShader> shader = (type == Type::kFractalNoise) ?
             SkPerlinNoiseShader::MakeFractalNoise(baseFrequencyX, baseFrequencyY, numOctaves,
                                                   seed, stitchTiles ? &tileSize : nullptr) :
             SkPerlinNoiseShader::MakeTurbulence(baseFrequencyX, baseFrequencyY, numOctaves,
@@ -57,60 +69,51 @@ protected:
         }
     }
 
-    virtual void onDraw(SkCanvas* canvas) {
+    void onDraw(SkCanvas* canvas) override {
         canvas->clear(SK_ColorBLACK);
-        test(canvas,   0,   0, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas,   0,   0, Type::kFractalNoise,
              0.1f, 0.1f, 0, 0, false);
-        test(canvas, 100,   0, SkPerlinNoiseShader::kTurbulence_Type,
+        test(canvas, 100,   0, Type::kTurbulence,
              0.1f, 0.1f, 0, 0, false);
 
-        test(canvas,   0, 100, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas,   0, 100, Type::kFractalNoise,
              0.1f, 0.1f, 2, 0, false);
-        test(canvas, 100, 100, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas, 100, 100, Type::kFractalNoise,
              0.05f, 0.1f, 1, 0, true);
 
-        test(canvas,   0, 200, SkPerlinNoiseShader::kTurbulence_Type,
+        test(canvas,   0, 200, Type::kTurbulence,
              0.1f, 0.1f, 1, 0, true);
-        test(canvas, 100, 200, SkPerlinNoiseShader::kTurbulence_Type,
+        test(canvas, 100, 200, Type::kTurbulence,
              0.2f, 0.4f, 5, 0, false);
 
-        test(canvas,   0, 300, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas,   0, 300, Type::kFractalNoise,
              0.1f, 0.1f, 3, 1, false);
-        test(canvas, 100, 300, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas, 100, 300, Type::kFractalNoise,
              0.1f, 0.1f, 3, 4, false);
 
         canvas->scale(0.75f, 1.0f);
 
-        test(canvas,   0, 400, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas,   0, 400, Type::kFractalNoise,
              0.1f, 0.1f, 2, 0, false);
-        test(canvas, 100, 400, SkPerlinNoiseShader::kFractalNoise_Type,
+        test(canvas, 100, 400, Type::kFractalNoise,
              0.1f, 0.05f, 1, 0, true);
     }
 
 private:
     typedef GM INHERITED;
-    SkISize fSize;
 };
 
 class PerlinNoiseGM2 : public skiagm::GM {
-public:
-    PerlinNoiseGM2() {
-        fSize = SkISize::Make(80, 80);
-    }
+    SkISize fSize = {80, 80};
 
-protected:
-    virtual SkString onShortName() {
-        return SkString("perlinnoise_localmatrix");
-    }
+    SkString onShortName() override { return SkString("perlinnoise_localmatrix"); }
 
-    virtual SkISize onISize() {
-        return SkISize::Make(640, 480);
-    }
+    SkISize onISize() override { return {640, 480}; }
 
-    void install(SkPaint* paint, SkPerlinNoiseShader::Type type,
+    void install(SkPaint* paint, Type type,
               float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed,
               bool stitchTiles) {
-        sk_sp<SkShader> shader = (type == SkPerlinNoiseShader::kFractalNoise_Type) ?
+        sk_sp<SkShader> shader = (type == Type::kFractalNoise) ?
             SkPerlinNoiseShader::MakeFractalNoise(baseFrequencyX, baseFrequencyY, numOctaves,
                                                   seed, stitchTiles ? &fSize : nullptr) :
             SkPerlinNoiseShader::MakeTurbulence(baseFrequencyX, baseFrequencyY, numOctaves,
@@ -118,11 +121,11 @@ protected:
         paint->setShader(std::move(shader));
     }
 
-    virtual void onDraw(SkCanvas* canvas) {
+    void onDraw(SkCanvas* canvas) override {
         canvas->translate(10, 10);
 
         SkPaint paint;
-        install(&paint, SkPerlinNoiseShader::kFractalNoise_Type, 0.1f, 0.1f, 2, 0, false);
+        this->install(&paint, Type::kFractalNoise, 0.1f, 0.1f, 2, 0, false);
 
         const SkScalar w = SkIntToScalar(fSize.width());
         const SkScalar h = SkIntToScalar(fSize.height());
@@ -168,13 +171,9 @@ protected:
         canvas->drawRect(r, paint);
         canvas->restore();
     }
-
-private:
-    typedef GM INHERITED;
-    SkISize fSize;
 };
 
-//////////////////////////////////////////////////////////////////////////////
+} // namespace
 
 DEF_GM( return new PerlinNoiseGM; )
 DEF_GM( return new PerlinNoiseGM2; )

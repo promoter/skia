@@ -5,18 +5,17 @@
  * found in the LICENSE file.
  */
 
-#include "Test.h"
-#include "RecordTestUtils.h"
+#include "tests/RecordTestUtils.h"
+#include "tests/Test.h"
 
-#include "SkBlurImageFilter.h"
-#include "SkColorFilter.h"
-#include "SkRecord.h"
-#include "SkRecordOpts.h"
-#include "SkRecorder.h"
-#include "SkRecords.h"
-#include "SkPictureRecorder.h"
-#include "SkPictureImageFilter.h"
-#include "SkSurface.h"
+#include "include/core/SkColorFilter.h"
+#include "include/core/SkPictureRecorder.h"
+#include "include/core/SkSurface.h"
+#include "include/effects/SkImageFilters.h"
+#include "src/core/SkRecord.h"
+#include "src/core/SkRecordOpts.h"
+#include "src/core/SkRecorder.h"
+#include "src/core/SkRecords.h"
 
 static const int W = 1920, H = 1080;
 
@@ -189,11 +188,21 @@ DEF_TEST(RecordOpts_NoopSaveLayerDrawRestore, r) {
     REPORTER_ASSERT(r, drawRect->paint.getColor() == 0x03020202);
 
     // saveLayer w/ backdrop should NOT go away
-    sk_sp<SkImageFilter> filter(SkBlurImageFilter::Make(3, 3, nullptr));
-    recorder.saveLayer({ nullptr, nullptr, filter.get(), 0});
+    sk_sp<SkImageFilter> filter(SkImageFilters::Blur(3, 3, nullptr));
+    recorder.saveLayer({ nullptr, nullptr, filter.get(), nullptr, nullptr, 0});
         recorder.drawRect(draw, opaqueDrawPaint);
     recorder.restore();
     assert_savelayer_draw_restore(r, &record, 18, false);
+
+    // saveLayer w/ clip mask should also NOT go away
+    {
+        sk_sp<SkSurface> surface(SkSurface::MakeRasterN32Premul(10, 10));
+        recorder.saveLayer({ nullptr, nullptr, nullptr, surface->makeImageSnapshot().get(),
+                             nullptr, 0});
+            recorder.drawRect(draw, opaqueDrawPaint);
+        recorder.restore();
+        assert_savelayer_draw_restore(r, &record, 21, false);
+    }
 }
 #endif
 
@@ -226,7 +235,7 @@ DEF_TEST(RecordOpts_MergeSvgOpacityAndFilterLayers, r) {
     xfermodePaint.setBlendMode(SkBlendMode::kDstIn);
     SkPaint colorFilterPaint;
     colorFilterPaint.setColorFilter(
-        SkColorFilter::MakeModeFilter(SK_ColorLTGRAY, SkBlendMode::kSrcIn));
+        SkColorFilters::Blend(SK_ColorLTGRAY, SkBlendMode::kSrcIn));
 
     SkPaint opaqueFilterLayerPaint;
     opaqueFilterLayerPaint.setColor(0xFF020202);  // Opaque.
@@ -241,12 +250,12 @@ DEF_TEST(RecordOpts_MergeSvgOpacityAndFilterLayers, r) {
         canvas->drawRect(SkRect::MakeWH(SkIntToScalar(50), SkIntToScalar(50)), shapePaint);
         shape = recorder.finishRecordingAsPicture();
     }
-    translucentFilterLayerPaint.setImageFilter(SkPictureImageFilter::Make(shape));
+    translucentFilterLayerPaint.setImageFilter(SkImageFilters::Picture(shape));
 
     int index = 0;
 
     {
-        sk_sp<SkImageFilter> filter(SkBlurImageFilter::Make(3, 3, nullptr));
+        sk_sp<SkImageFilter> filter(SkImageFilters::Blur(3, 3, nullptr));
         // first (null) should be optimized, 2nd should not
         SkImageFilter* filters[] = { nullptr, filter.get() };
 
@@ -265,10 +274,12 @@ DEF_TEST(RecordOpts_MergeSvgOpacityAndFilterLayers, r) {
                             for (size_t m = 0; m < SK_ARRAY_COUNT(secondPaints); ++m) {
                                 bool innerNoOped = !secondBounds[k] && !secondPaints[m] && !innerF;
 
-                                recorder.saveLayer({firstBounds[i], firstPaints[j], outerF, 0});
+                                recorder.saveLayer({firstBounds[i], firstPaints[j], outerF,
+                                                    nullptr, nullptr, 0});
                                 recorder.save();
                                 recorder.clipRect(clip);
-                                recorder.saveLayer({secondBounds[k], secondPaints[m], innerF, 0});
+                                recorder.saveLayer({secondBounds[k], secondPaints[m], innerF,
+                                                    nullptr, nullptr, 0});
                                 recorder.restore();
                                 recorder.restore();
                                 recorder.restore();

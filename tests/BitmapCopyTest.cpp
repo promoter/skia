@@ -5,27 +5,22 @@
  * found in the LICENSE file.
  */
 
-#include "SkBitmap.h"
-#include "SkRect.h"
-#include "SkTemplates.h"
-#include "Test.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkColorSpace.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkTypes.h"
+#include "tests/Test.h"
+#include "tools/ToolUtils.h"
 
 static void init_src(const SkBitmap& bitmap) {
-    SkAutoLockPixels lock(bitmap);
     if (bitmap.getPixels()) {
-        if (bitmap.getColorTable()) {
-            sk_bzero(bitmap.getPixels(), bitmap.getSize());
-        } else {
-            bitmap.eraseColor(SK_ColorWHITE);
-        }
+        bitmap.eraseColor(SK_ColorWHITE);
     }
-}
-
-static sk_sp<SkColorTable> init_ctable() {
-    static const SkColor colors[] = {
-        SK_ColorBLACK, SK_ColorRED, SK_ColorGREEN, SK_ColorBLUE, SK_ColorWHITE
-    };
-    return SkColorTable::Make(colors, SK_ARRAY_COUNT(colors));
 }
 
 struct Pair {
@@ -63,7 +58,6 @@ struct Coordinates {
 static const Pair gPairs[] = {
     { kUnknown_SkColorType,     "0000000"  },
     { kAlpha_8_SkColorType,     "0100000"  },
-    { kIndex_8_SkColorType,     "0101111"  },
     { kRGB_565_SkColorType,     "0101011"  },
     { kARGB_4444_SkColorType,   "0101111"  },
     { kN32_SkColorType,         "0101111"  },
@@ -75,18 +69,13 @@ static const int H = 33;
 
 static void setup_src_bitmaps(SkBitmap* srcOpaque, SkBitmap* srcPremul,
                               SkColorType ct) {
-    sk_sp<SkColorTable> ctable;
-    if (kIndex_8_SkColorType == ct) {
-        ctable = init_ctable();
-    }
-
     sk_sp<SkColorSpace> colorSpace = nullptr;
     if (kRGBA_F16_SkColorType == ct) {
-        colorSpace = SkColorSpace::MakeSRGBLinear();
+        colorSpace = SkColorSpace::MakeSRGB();
     }
 
-    srcOpaque->allocPixels(SkImageInfo::Make(W, H, ct, kOpaque_SkAlphaType, colorSpace), ctable);
-    srcPremul->allocPixels(SkImageInfo::Make(W, H, ct, kPremul_SkAlphaType, colorSpace), ctable);
+    srcOpaque->allocPixels(SkImageInfo::Make(W, H, ct, kOpaque_SkAlphaType, colorSpace));
+    srcPremul->allocPixels(SkImageInfo::Make(W, H, ct, kPremul_SkAlphaType, colorSpace));
     init_src(*srcOpaque);
     init_src(*srcPremul);
 }
@@ -101,7 +90,7 @@ DEF_TEST(BitmapCopy_extractSubset, reporter) {
         SkIRect r;
         // Extract a subset which has the same width as the original. This
         // catches a bug where we cloned the genID incorrectly.
-        r.set(0, 1, W, 3);
+        r.setLTRB(0, 1, W, 3);
         bitmap.setIsVolatile(true);
         // Relies on old behavior of extractSubset failing if colortype is unknown
         if (kUnknown_SkColorType != bitmap.colorType() && bitmap.extractSubset(&subset, r)) {
@@ -113,12 +102,11 @@ DEF_TEST(BitmapCopy_extractSubset, reporter) {
             // Test copying an extracted subset.
             for (size_t j = 0; j < SK_ARRAY_COUNT(gPairs); j++) {
                 SkBitmap copy;
-                bool success = subset.copyTo(&copy, gPairs[j].fColorType);
+                bool     success = ToolUtils::copy_to(&copy, gPairs[j].fColorType, subset);
                 if (!success) {
                     // Skip checking that success matches fValid, which is redundant
                     // with the code below.
-                    REPORTER_ASSERT(reporter, kIndex_8_SkColorType == gPairs[i].fColorType ||
-                                              gPairs[i].fColorType != gPairs[j].fColorType);
+                    REPORTER_ASSERT(reporter, gPairs[i].fColorType != gPairs[j].fColorType);
                     continue;
                 }
 
@@ -128,14 +116,6 @@ DEF_TEST(BitmapCopy_extractSubset, reporter) {
 
                 REPORTER_ASSERT(reporter, copy.width() == W);
                 REPORTER_ASSERT(reporter, copy.height() == 2);
-
-                if (gPairs[i].fColorType == gPairs[j].fColorType) {
-                    SkAutoLockPixels alp0(subset);
-                    SkAutoLockPixels alp1(copy);
-                    // they should both have, or both not-have, a colortable
-                    bool hasCT = subset.getColorTable() != nullptr;
-                    REPORTER_ASSERT(reporter, (copy.getColorTable() != nullptr) == hasCT);
-                }
             }
         }
 
@@ -148,8 +128,8 @@ DEF_TEST(BitmapCopy_extractSubset, reporter) {
     }
 }
 
-#include "SkColorPriv.h"
-#include "SkUtils.h"
+#include "include/core/SkColorPriv.h"
+#include "src/core/SkUtils.h"
 
 /**
  *  Construct 4x4 pixels where we can look at a color and determine where it should be in the grid.
@@ -212,8 +192,7 @@ DEF_TEST(BitmapReadPixels, reporter) {
     for (size_t i = 0; i < SK_ARRAY_COUNT(gRec); ++i) {
         clear_4x4_pixels(dstPixels);
 
-        dstInfo = dstInfo.makeWH(gRec[i].fRequestedDstSize.width(),
-                                 gRec[i].fRequestedDstSize.height());
+        dstInfo = dstInfo.makeDimensions(gRec[i].fRequestedDstSize);
         bool success = srcBM.readPixels(dstInfo, dstPixels, rowBytes,
                                         gRec[i].fRequestedSrcLoc.x(), gRec[i].fRequestedSrcLoc.y());
 
@@ -238,21 +217,4 @@ DEF_TEST(BitmapReadPixels, reporter) {
             }
         }
     }
-}
-
-DEF_TEST(BitmapCopy_ColorSpaceMatch, r) {
-    // We should support matching color spaces, even if they are parametric.
-    SkColorSpaceTransferFn fn;
-    fn.fA = 1.f; fn.fB = 0.f; fn.fC = 0.f; fn.fD = 0.f; fn.fE = 0.f; fn.fF = 0.f; fn.fG = 1.8f;
-    sk_sp<SkColorSpace> cs = SkColorSpace::MakeRGB(fn, SkColorSpace::kRec2020_Gamut);
-
-    SkImageInfo info = SkImageInfo::MakeN32Premul(1, 1, cs);
-    SkBitmap bitmap;
-    bitmap.allocPixels(info);
-    bitmap.eraseColor(0);
-
-    SkBitmap copy;
-    bool success = bitmap.copyTo(&copy, kN32_SkColorType);
-    REPORTER_ASSERT(r, success);
-    REPORTER_ASSERT(r, cs.get() == copy.colorSpace());
 }

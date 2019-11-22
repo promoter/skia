@@ -8,93 +8,63 @@
 #ifndef GrStencilPathOp_DEFINED
 #define GrStencilPathOp_DEFINED
 
-#include "GrGpu.h"
-#include "GrOp.h"
-#include "GrOpFlushState.h"
-#include "GrPath.h"
-#include "GrPathRendering.h"
-#include "GrRenderTarget.h"
-#include "GrStencilSettings.h"
+#include "src/gpu/GrPath.h"
+#include "src/gpu/GrPathRendering.h"
+#include "src/gpu/GrScissorState.h"
+#include "src/gpu/GrStencilSettings.h"
+#include "src/gpu/ops/GrOp.h"
+
+class GrOpFlushState;
+class GrRecordingContext;
 
 class GrStencilPathOp final : public GrOp {
 public:
     DEFINE_OP_CLASS_ID
 
-    // MDB TODO: replace the renderTargetContext with just the renderTargetProxy.
-    // For now, we need the renderTargetContext for its accessRenderTarget powers.
-    static std::unique_ptr<GrOp> Make(const SkMatrix& viewMatrix,
+    static std::unique_ptr<GrOp> Make(GrRecordingContext* context,
+                                      const SkMatrix& viewMatrix,
                                       bool useHWAA,
-                                      GrPathRendering::FillType fillType,
                                       bool hasStencilClip,
-                                      int numStencilBits,
                                       const GrScissorState& scissor,
-                                      GrRenderTargetContext* renderTargetContext,
-                                      const GrPath* path) {
-
-        // MDB TODO: remove this. In this hybrid state we need to be sure the RT is instantiable
-        // so it can carry the IO refs. In the future we will just get the proxy and
-        // it will carry the IO refs.
-        if (!renderTargetContext->accessRenderTarget()) {
-            return nullptr;
-        }
-
-        return std::unique_ptr<GrOp>(new GrStencilPathOp(viewMatrix, useHWAA, fillType,
-                                                         hasStencilClip, numStencilBits, scissor,
-                                                         renderTargetContext, path));
-    }
+                                      sk_sp<const GrPath> path);
 
     const char* name() const override { return "StencilPathOp"; }
 
+#ifdef SK_DEBUG
     SkString dumpInfo() const override {
         SkString string;
         string.printf("Path: 0x%p, AA: %d", fPath.get(), fUseHWAA);
-        string.appendf("rtID: %d proxyID: %d",
-                       fRenderTarget.get()->uniqueID().asUInt(), fProxyUniqueID.asUInt());
         string.append(INHERITED::dumpInfo());
         return string;
     }
+#endif
 
 private:
+    friend class GrOpMemoryPool; // for ctor
+
     GrStencilPathOp(const SkMatrix& viewMatrix,
                     bool useHWAA,
-                    GrPathRendering::FillType fillType,
                     bool hasStencilClip,
-                    int numStencilBits,
                     const GrScissorState& scissor,
-                    GrRenderTargetContext* renderTargetContext,
-                    const GrPath* path)
+                    sk_sp<const GrPath> path)
             : INHERITED(ClassID())
             , fViewMatrix(viewMatrix)
             , fUseHWAA(useHWAA)
-            , fStencil(GrPathRendering::GetStencilPassSettings(fillType), hasStencilClip,
-                       numStencilBits)
+            , fHasStencilClip(hasStencilClip)
             , fScissor(scissor)
-            , fProxyUniqueID(renderTargetContext->asSurfaceProxy()->uniqueID())
-            , fPath(path) {
-        this->setBounds(path->getBounds(), HasAABloat::kNo, IsZeroArea::kNo);
-
-        fRenderTarget.reset(renderTargetContext->accessRenderTarget());
+            , fPath(std::move(path)) {
+        this->setBounds(fPath->getBounds(), HasAABloat::kNo, IsHairline::kNo);
     }
-
-    bool onCombineIfPossible(GrOp* t, const GrCaps& caps) override { return false; }
 
     void onPrepare(GrOpFlushState*) override {}
 
-    void onExecute(GrOpFlushState* state) override {
-        // MDB TODO: instantiate the renderTarget from the proxy in here
-        GrPathRendering::StencilPathArgs args(fUseHWAA, fRenderTarget.get(), &fViewMatrix,
-                                              &fScissor, &fStencil);
-        state->gpu()->pathRendering()->stencilPath(args, fPath.get());
-    }
+    void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
 
-    SkMatrix                                             fViewMatrix;
-    bool                                                 fUseHWAA;
-    GrStencilSettings                                    fStencil;
-    GrScissorState                                       fScissor;
-    // MDB TODO: remove this. When the renderTargetProxy carries the refs this will be redundant.
-    GrSurfaceProxy::UniqueID                             fProxyUniqueID;
-    GrPendingIOResource<GrRenderTarget, kWrite_GrIOType> fRenderTarget;
-    GrPendingIOResource<const GrPath, kRead_GrIOType>    fPath;
+    SkMatrix                  fViewMatrix;
+    bool                      fUseHWAA;
+    bool                      fHasStencilClip;
+    GrScissorState            fScissor;
+    sk_sp<const GrPath>       fPath;
 
     typedef GrOp INHERITED;
 };

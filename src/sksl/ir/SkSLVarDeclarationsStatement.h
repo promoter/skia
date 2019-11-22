@@ -8,8 +8,8 @@
 #ifndef SKSL_VARDECLARATIONSSTATEMENT
 #define SKSL_VARDECLARATIONSSTATEMENT
 
-#include "SkSLStatement.h"
-#include "SkSLVarDeclarations.h"
+#include "src/sksl/ir/SkSLStatement.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
 
 namespace SkSL {
 
@@ -18,14 +18,28 @@ namespace SkSL {
  */
 struct VarDeclarationsStatement : public Statement {
     VarDeclarationsStatement(std::unique_ptr<VarDeclarations> decl)
-    : INHERITED(decl->fPosition, kVarDeclarations_Kind)
+    : INHERITED(decl->fOffset, kVarDeclarations_Kind)
     , fDeclaration(std::move(decl)) {}
 
-    String description() const override {
-        return fDeclaration->description();
+    bool isEmpty() const override {
+        for (const auto& s : fDeclaration->fVars) {
+            if (!s->isEmpty()) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    std::shared_ptr<VarDeclarations> fDeclaration;
+    std::unique_ptr<Statement> clone() const override {
+        std::unique_ptr<VarDeclarations> cloned((VarDeclarations*) fDeclaration->clone().release());
+        return std::unique_ptr<Statement>(new VarDeclarationsStatement(std::move(cloned)));
+    }
+
+    String description() const override {
+        return fDeclaration->description() + ";";
+    }
+
+    std::unique_ptr<VarDeclarations> fDeclaration;
 
     typedef Statement INHERITED;
 };

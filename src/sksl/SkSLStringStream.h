@@ -8,7 +8,8 @@
 #ifndef SKSL_STRINGSTREAM
 #define SKSL_STRINGSTREAM
 
-#include "SkSLOutputStream.h"
+#include "src/sksl/SkSLOutputStream.h"
+#include "src/sksl/SkSLString.h"
 
 #ifdef SKSL_STANDALONE
 
@@ -28,12 +29,8 @@ public:
         fBuffer.append((const char*) s, size);
     }
 
-    const char* data() const {
-        return fBuffer.c_str();
-    }
-
-    size_t size() const {
-        return fBuffer.size();
+    const String& str() const {
+        return fBuffer;
     }
 
     void reset() {
@@ -46,50 +43,41 @@ private:
 
 #else
 
-#include "SkData.h"
-#include "SkStream.h"
+#include "include/core/SkData.h"
+#include "include/core/SkStream.h"
 
 namespace SkSL {
 
 class StringStream : public OutputStream {
 public:
     void write8(uint8_t b) override {
-        SkASSERT(!fData);
         fStream.write8(b);
     }
 
     void writeText(const char* s) override {
-        SkASSERT(!fData);
         fStream.writeText(s);
     }
 
     void write(const void* s, size_t size) override {
-        SkASSERT(!fData);
         fStream.write(s, size);
     }
 
-    const char* data() const {
-        if (!fData) {
-            fData = fStream.detachAsData();
+    const String& str() const {
+        if (!fString.size()) {
+            sk_sp<SkData> data = fStream.detachAsData();
+            fString = String((const char*) data->data(), data->size());
         }
-        return (const char*) fData->data();
-    }
-
-    size_t size() const {
-        if (!fData) {
-            fData = fStream.detachAsData();
-        }
-        return fData->size();
+        return fString;
     }
 
     void reset() {
         fStream.reset();
-        fData = nullptr;
+        fString = "";
     }
 
 private:
     mutable SkDynamicMemoryWStream fStream;
-    mutable sk_sp<SkData> fData;
+    mutable String fString;
 };
 
 #endif // SKSL_STANDALONE

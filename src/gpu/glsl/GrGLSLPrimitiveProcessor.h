@@ -8,13 +8,13 @@
 #ifndef GrGLSLPrimitiveProcessor_DEFINED
 #define GrGLSLPrimitiveProcessor_DEFINED
 
-#include "GrFragmentProcessor.h"
-#include "GrPrimitiveProcessor.h"
-#include "glsl/GrGLSLProgramDataManager.h"
-#include "glsl/GrGLSLUniformHandler.h"
+#include "src/gpu/GrFragmentProcessor.h"
+#include "src/gpu/GrPrimitiveProcessor.h"
+#include "src/gpu/glsl/GrGLSLProgramDataManager.h"
+#include "src/gpu/glsl/GrGLSLUniformHandler.h"
 
 class GrPrimitiveProcessor;
-class GrGLSLPPFragmentBuilder;
+class GrGLSLFPFragmentBuilder;
 class GrGLSLGeometryBuilder;
 class GrGLSLGPBuilder;
 class GrGLSLVaryingHandler;
@@ -23,13 +23,29 @@ class GrShaderCaps;
 
 class GrGLSLPrimitiveProcessor {
 public:
+    using UniformHandle        = GrGLSLProgramDataManager::UniformHandle;
+    using SamplerHandle        = GrGLSLUniformHandler::SamplerHandle;
     using FPCoordTransformIter = GrFragmentProcessor::CoordTransformIter;
 
-    virtual ~GrGLSLPrimitiveProcessor() {}
+    struct TransformVar {
+        TransformVar() = default;
 
-    using UniformHandle      = GrGLSLProgramDataManager::UniformHandle;
-    using SamplerHandle      = GrGLSLUniformHandler::SamplerHandle;
-    using ImageStorageHandle = GrGLSLUniformHandler::ImageStorageHandle;
+        TransformVar(SkString matrixCode, UniformHandle uniformMatrix, GrShaderVar varyingPoint)
+            : fMatrixCode(std::move(matrixCode))
+            , fUniformMatrix(uniformMatrix)
+            , fVaryingPoint(varyingPoint) {}
+
+        // a string of SkSL code which resolves to the transformation matrix
+        SkString fMatrixCode;
+        // the variable containing the matrix, if any, otherwise an invalid handle
+        UniformHandle fUniformMatrix;
+        // the transformed coordinate output by the vertex shader and consumed by the fragment
+        // shader
+        GrShaderVar fVaryingPoint;
+    };
+
+
+    virtual ~GrGLSLPrimitiveProcessor() {}
 
     /**
      * This class provides access to the GrCoordTransforms across all GrFragmentProcessors in a
@@ -41,7 +57,7 @@ public:
     class FPCoordTransformHandler : public SkNoncopyable {
     public:
         FPCoordTransformHandler(const GrPipeline& pipeline,
-                                SkTArray<GrShaderVar>* transformedCoordVars)
+                                SkTArray<TransformVar>* transformedCoordVars)
                 : fIter(pipeline)
                 , fTransformedCoordVars(transformedCoordVars) {}
 
@@ -61,24 +77,21 @@ public:
         GrFragmentProcessor::CoordTransformIter fIter;
         SkDEBUGCODE(bool                        fAddedCoord = false;)
         SkDEBUGCODE(const GrCoordTransform*     fCurr = nullptr;)
-        SkTArray<GrShaderVar>*                  fTransformedCoordVars;
+        SkTArray<TransformVar>*                 fTransformedCoordVars;
     };
 
     struct EmitArgs {
         EmitArgs(GrGLSLVertexBuilder* vertBuilder,
                  GrGLSLGeometryBuilder* geomBuilder,
-                 GrGLSLPPFragmentBuilder* fragBuilder,
+                 GrGLSLFPFragmentBuilder* fragBuilder,
                  GrGLSLVaryingHandler* varyingHandler,
                  GrGLSLUniformHandler* uniformHandler,
                  const GrShaderCaps* caps,
                  const GrPrimitiveProcessor& gp,
                  const char* outputColor,
                  const char* outputCoverage,
-                 const char* distanceVectorName,
                  const char* rtAdjustName,
                  const SamplerHandle* texSamplers,
-                 const SamplerHandle* bufferSamplers,
-                 const ImageStorageHandle* imageStorages,
                  FPCoordTransformHandler* transformHandler)
             : fVertBuilder(vertBuilder)
             , fGeomBuilder(geomBuilder)
@@ -89,26 +102,20 @@ public:
             , fGP(gp)
             , fOutputColor(outputColor)
             , fOutputCoverage(outputCoverage)
-            , fDistanceVectorName(distanceVectorName)
             , fRTAdjustName(rtAdjustName)
             , fTexSamplers(texSamplers)
-            , fBufferSamplers(bufferSamplers)
-            , fImageStorages(imageStorages)
             , fFPCoordTransformHandler(transformHandler) {}
         GrGLSLVertexBuilder* fVertBuilder;
         GrGLSLGeometryBuilder* fGeomBuilder;
-        GrGLSLPPFragmentBuilder* fFragBuilder;
+        GrGLSLFPFragmentBuilder* fFragBuilder;
         GrGLSLVaryingHandler* fVaryingHandler;
         GrGLSLUniformHandler* fUniformHandler;
         const GrShaderCaps* fShaderCaps;
         const GrPrimitiveProcessor& fGP;
         const char* fOutputColor;
         const char* fOutputCoverage;
-        const char* fDistanceVectorName;
         const char* fRTAdjustName;
         const SamplerHandle* fTexSamplers;
-        const SamplerHandle* fBufferSamplers;
-        const ImageStorageHandle* fImageStorages;
         FPCoordTransformHandler* fFPCoordTransformHandler;
     };
 
@@ -135,7 +142,7 @@ public:
     static SkMatrix GetTransformMatrix(const SkMatrix& localMatrix, const GrCoordTransform&);
 
 protected:
-    void setupUniformColor(GrGLSLPPFragmentBuilder* fragBuilder,
+    void setupUniformColor(GrGLSLFPFragmentBuilder* fragBuilder,
                            GrGLSLUniformHandler* uniformHandler,
                            const char* outputName,
                            UniformHandle* colorUniform);

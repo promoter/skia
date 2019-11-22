@@ -8,10 +8,15 @@
 #ifndef SkTArray_DEFINED
 #define SkTArray_DEFINED
 
-#include "../private/SkTLogic.h"
-#include "../private/SkTemplates.h"
-#include "SkTypes.h"
+#include "include/core/SkMath.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkMalloc.h"
+#include "include/private/SkSafe32.h"
+#include "include/private/SkTLogic.h"
+#include "include/private/SkTemplates.h"
 
+#include <string.h>
+#include <memory>
 #include <new>
 #include <utility>
 
@@ -36,12 +41,12 @@ public:
     /**
      * Copies one array to another. The new array will be heap allocated.
      */
-    explicit SkTArray(const SkTArray& that) {
+    SkTArray(const SkTArray& that) {
         this->init(that.fCount);
         this->copy(that.fItemArray);
     }
 
-    explicit SkTArray(SkTArray&& that) {
+    SkTArray(SkTArray&& that) {
         // TODO: If 'that' owns its memory why don't we just steal the pointer?
         this->init(that.fCount);
         that.move(fMemArray);
@@ -96,12 +101,15 @@ public:
     }
 
     /**
-     * Resets to count() == 0
+     * Resets to count() == 0 and resets any reserve count.
      */
-    void reset() { this->pop_back_n(fCount); }
+    void reset() {
+        this->pop_back_n(fCount);
+        fReserved = false;
+    }
 
     /**
-     * Resets to count() = n newly constructed T objects.
+     * Resets to count() = n newly constructed T objects and resets any reserve count.
      */
     void reset(int n) {
         SkASSERT(n >= 0);
@@ -115,19 +123,11 @@ public:
         for (int i = 0; i < fCount; ++i) {
             new (fItemArray + i) T;
         }
+        fReserved = false;
     }
 
     /**
-     * Ensures there is enough reserved space for n elements.
-     */
-    void reserve(int n) {
-        if (fCount < n) {
-            this->checkRealloc(n - fCount);
-        }
-    }
-
-    /**
-     * Resets to a copy of a C array.
+     * Resets to a copy of a C array and resets any reserve count.
      */
     void reset(const T* array, int count) {
         for (int i = 0; i < fCount; ++i) {
@@ -137,6 +137,22 @@ public:
         this->checkRealloc(count);
         fCount = count;
         this->copy(array);
+        fReserved = false;
+    }
+
+    /**
+     * Ensures there is enough reserved space for n additional elements. The is guaranteed at least
+     * until the array size grows above n and subsequently shrinks below n, any version of reset()
+     * is called, or reserve() is called again.
+     */
+    void reserve(int n) {
+        SkASSERT(n >= 0);
+        if (n > 0) {
+            this->checkRealloc(n);
+            fReserved = fOwnMemory;
+        } else {
+            fReserved = false;
+        }
     }
 
     void removeShuffle(int n) {
@@ -286,18 +302,19 @@ public:
 
     /** Swaps the contents of this array with that array. Does a pointer swap if possible,
         otherwise copies the T values. */
-    void swap(SkTArray* that) {
-        if (this == that) {
+    void swap(SkTArray& that) {
+        using std::swap;
+        if (this == &that) {
             return;
         }
-        if (fOwnMemory && that->fOwnMemory) {
-            SkTSwap(fItemArray, that->fItemArray);
-            SkTSwap(fCount, that->fCount);
-            SkTSwap(fAllocCount, that->fAllocCount);
+        if (fOwnMemory && that.fOwnMemory) {
+            swap(fItemArray, that.fItemArray);
+            swap(fCount, that.fCount);
+            swap(fAllocCount, that.fAllocCount);
         } else {
             // This could be more optimal...
-            SkTArray copy(std::move(*that));
-            *that = std::move(*this);
+            SkTArray copy(std::move(that));
+            that = std::move(*this);
             *this = std::move(copy);
         }
     }
@@ -309,11 +326,15 @@ public:
         return fItemArray;
     }
     T* end() {
-        return fItemArray ? fItemArray + fCount : NULL;
+        return fItemArray ? fItemArray + fCount : nullptr;
     }
     const T* end() const {
-        return fItemArray ? fItemArray + fCount : NULL;
+        return fItemArray ? fItemArray + fCount : nullptr;
     }
+    T* data() { return fItemArray; }
+    const T* data() const { return fItemArray; }
+    size_t size() const { return (size_t)fCount; }
+    void resize(size_t count) { this->resize_back((int)count); }
 
    /**
      * Get the i^th element.
@@ -430,11 +451,13 @@ private:
         if (!count && !reserveCount) {
             fAllocCount = 0;
             fMemArray = nullptr;
-            fOwnMemory = false;
+            fOwnMemory = true;
+            fReserved = false;
         } else {
             fAllocCount = SkTMax(count, SkTMax(kMinHeapAllocCount, reserveCount));
-            fMemArray = sk_malloc_throw(fAllocCount * sizeof(T));
+            fMemArray = sk_malloc_throw(fAllocCount, sizeof(T));
             fOwnMemory = true;
+            fReserved = reserveCount > 0;
         }
     }
 
@@ -444,9 +467,10 @@ private:
         SkASSERT(preallocStorage);
         fCount = count;
         fMemArray = nullptr;
+        fReserved = false;
         if (count > preallocCount) {
             fAllocCount = SkTMax(count, kMinHeapAllocCount);
-            fMemArray = sk_malloc_throw(fAllocCount * sizeof(T));
+            fMemArray = sk_malloc_throw(fAllocCount, sizeof(T));
             fOwnMemory = true;
         } else {
             fAllocCount = preallocCount;
@@ -502,19 +526,21 @@ private:
         SkASSERT(fAllocCount >= 0);
         SkASSERT(-delta <= fCount);
 
-        int newCount = fCount + delta;
+        // Move into 64bit math temporarily, to avoid local overflows
+        int64_t newCount = fCount + delta;
 
         // We allow fAllocCount to be in the range [newCount, 3*newCount]. We also never shrink
-        // when we're currently using preallocated memory or would allocate less than
-        // kMinHeapAllocCount.
+        // when we're currently using preallocated memory, would allocate less than
+        // kMinHeapAllocCount, or a reserve count was specified that has yet to be exceeded.
         bool mustGrow = newCount > fAllocCount;
-        bool shouldShrink = fAllocCount > 3 * newCount && fOwnMemory;
+        bool shouldShrink = fAllocCount > 3 * newCount && fOwnMemory && !fReserved;
         if (!mustGrow && !shouldShrink) {
             return;
         }
 
+
         // Whether we're growing or shrinking, we leave at least 50% extra space for future growth.
-        int newAllocCount = newCount + ((newCount + 1) >> 1);
+        int64_t newAllocCount = newCount + ((newCount + 1) >> 1);
         // Align the new allocation count to kMinHeapAllocCount.
         static_assert(SkIsPow2(kMinHeapAllocCount), "min alloc count not power of two.");
         newAllocCount = (newAllocCount + (kMinHeapAllocCount - 1)) & ~(kMinHeapAllocCount - 1);
@@ -522,8 +548,10 @@ private:
         if (newAllocCount == fAllocCount) {
             return;
         }
-        fAllocCount = newAllocCount;
-        void* newMemArray = sk_malloc_throw(fAllocCount * sizeof(T));
+
+        fAllocCount = Sk64_pin_to_s32(newAllocCount);
+        SkASSERT(fAllocCount >= newCount);
+        void* newMemArray = sk_malloc_throw(fAllocCount, sizeof(T));
         this->move(newMemArray);
         if (fOwnMemory) {
             sk_free(fMemArray);
@@ -531,16 +559,22 @@ private:
         }
         fMemArray = newMemArray;
         fOwnMemory = true;
+        fReserved = false;
     }
 
-    int fCount;
-    int fAllocCount;
-    bool fOwnMemory;
     union {
         T*       fItemArray;
         void*    fMemArray;
     };
+    int fCount;
+    int fAllocCount;
+    bool fOwnMemory : 1;
+    bool fReserved : 1;
 };
+
+template <typename T, bool M> static inline void swap(SkTArray<T, M>& a, SkTArray<T, M>& b) {
+    a.swap(b);
+}
 
 template<typename T, bool MEM_MOVE> constexpr int SkTArray<T, MEM_MOVE>::kMinHeapAllocCount;
 

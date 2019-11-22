@@ -9,10 +9,8 @@
 #ifndef GrGLTextureRenderTarget_DEFINED
 #define GrGLTextureRenderTarget_DEFINED
 
-#include "GrGLGpu.h"
-#include "GrGLTexture.h"
-#include "GrGLRenderTarget.h"
-#include "GrTexturePriv.h"
+#include "src/gpu/gl/GrGLRenderTarget.h"
+#include "src/gpu/gl/GrGLTexture.h"
 
 class GrGLGpu;
 
@@ -28,23 +26,28 @@ public:
     // constructor must be explicitly called.
     GrGLTextureRenderTarget(GrGLGpu* gpu,
                             SkBudgeted budgeted,
-                            const GrSurfaceDesc& desc,
-                            const GrGLTexture::IDDesc& texIDDesc,
-                            const GrGLRenderTarget::IDDesc& rtIDDesc,
-                            bool wasMipMapDataProvided)
-        : GrSurface(gpu, desc)
-        , GrGLTexture(gpu, desc, texIDDesc, wasMipMapDataProvided)
-        , GrGLRenderTarget(gpu, desc, rtIDDesc) {
-        this->registerWithCache(budgeted);
-    }
+                            int sampleCount,
+                            const GrGLTexture::Desc& texDesc,
+                            const GrGLRenderTarget::IDs&,
+                            GrMipMapsStatus);
 
     bool canAttemptStencilAttachment() const override;
 
     void dumpMemoryStatistics(SkTraceMemoryDump* traceMemoryDump) const override;
 
-    static sk_sp<GrGLTextureRenderTarget> MakeWrapped(GrGLGpu* gpu, const GrSurfaceDesc& desc,
-                                                      const GrGLTexture::IDDesc& texIDDesc,
-                                                      const GrGLRenderTarget::IDDesc& rtIDDesc);
+    static sk_sp<GrGLTextureRenderTarget> MakeWrapped(GrGLGpu* gpu,
+                                                      int sampleCount,
+                                                      const GrGLTexture::Desc&,
+                                                      sk_sp<GrGLTextureParameters>,
+                                                      const GrGLRenderTarget::IDs&,
+                                                      GrWrapCacheable,
+                                                      GrMipMapsStatus);
+
+    GrBackendFormat backendFormat() const override {
+        // It doesn't matter if we take the texture or render target path, so just pick texture.
+        return GrGLTexture::backendFormat();
+    }
+
 protected:
     void onAbandon() override {
         GrGLRenderTarget::onAbandon();
@@ -59,22 +62,14 @@ protected:
 private:
     // Constructor for instances wrapping backend objects.
     GrGLTextureRenderTarget(GrGLGpu* gpu,
-                            const GrSurfaceDesc& desc,
-                            const GrGLTexture::IDDesc& texIDDesc,
-                            const GrGLRenderTarget::IDDesc& rtIDDesc,
-                            bool wasMipMapDataProvided)
-        : GrSurface(gpu, desc)
-        , GrGLTexture(gpu, desc, texIDDesc, wasMipMapDataProvided)
-        , GrGLRenderTarget(gpu, desc, rtIDDesc) {
-        this->registerWithCacheWrapped();
-    }
+                            int sampleCount,
+                            const GrGLTexture::Desc& texDesc,
+                            sk_sp<GrGLTextureParameters> parameters,
+                            const GrGLRenderTarget::IDs& ids,
+                            GrWrapCacheable,
+                            GrMipMapsStatus);
 
-    size_t onGpuMemorySize() const override {
-        return GrSurface::ComputeSize(fDesc,
-                                      this->numSamplesOwnedPerPixel(),
-                                      this->texturePriv().hasMipMaps());
-    }
-
+    size_t onGpuMemorySize() const override;
 };
 
 #ifdef SK_BUILD_FOR_WIN

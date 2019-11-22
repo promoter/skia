@@ -8,9 +8,9 @@
 #ifndef SkBitmapRegionCodec_DEFINED
 #define SkBitmapRegionCodec_DEFINED
 
-#include "SkBitmap.h"
-#include "SkBitmapRegionDecoder.h"
-#include "SkAndroidCodec.h"
+#include "include/android/SkBitmapRegionDecoder.h"
+#include "include/codec/SkAndroidCodec.h"
+#include "include/core/SkBitmap.h"
 
 /*
  * This class implements SkBitmapRegionDecoder using an SkAndroidCodec.
@@ -28,9 +28,16 @@ public:
                       SkColorType colorType, bool requireUnpremul,
                       sk_sp<SkColorSpace> prefColorSpace) override;
 
-    bool conversionSupported(SkColorType colorType) override;
-
     SkEncodedImageFormat getEncodedFormat() override { return fCodec->getEncodedFormat(); }
+
+    SkColorType computeOutputColorType(SkColorType requestedColorType) override {
+        return fCodec->computeOutputColorType(requestedColorType);
+    }
+
+    sk_sp<SkColorSpace> computeOutputColorSpace(SkColorType outputColorType,
+            sk_sp<SkColorSpace> prefColorSpace = nullptr) override {
+        return fCodec->computeOutputColorSpace(outputColorType, prefColorSpace);
+    }
 
 private:
 

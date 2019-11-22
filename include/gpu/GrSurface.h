@@ -5,41 +5,40 @@
  * found in the LICENSE file.
  */
 
-
 #ifndef GrSurface_DEFINED
 #define GrSurface_DEFINED
 
-#include "GrTypes.h"
-#include "GrGpuResource.h"
-#include "SkImageInfo.h"
-#include "SkRect.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkRect.h"
+#include "include/gpu/GrBackendSurface.h"
+#include "include/gpu/GrGpuResource.h"
+#include "include/gpu/GrTypes.h"
 
-class GrOpList;
 class GrRenderTarget;
 class GrSurfacePriv;
 class GrTexture;
 
-class SK_API GrSurface : public GrGpuResource {
+class GrSurface : public GrGpuResource {
 public:
+    /**
+     * Retrieves the dimensions of the surface.
+     */
+    SkISize dimensions() const { return fDimensions; }
+
     /**
      * Retrieves the width of the surface.
      */
-    int width() const { return fDesc.fWidth; }
+    int width() const { return fDimensions.width(); }
 
     /**
      * Retrieves the height of the surface.
      */
-    int height() const { return fDesc.fHeight; }
+    int height() const { return fDimensions.height(); }
 
     /**
      * Helper that gets the width and height of the surface as a bounding rectangle.
      */
-    SkRect getBoundsRect() const { return SkRect::MakeIWH(this->width(), this->height()); }
-
-    GrSurfaceOrigin origin() const {
-        SkASSERT(kTopLeft_GrSurfaceOrigin == fDesc.fOrigin || kBottomLeft_GrSurfaceOrigin == fDesc.fOrigin);
-        return fDesc.fOrigin;
-    }
+    SkRect getBoundsRect() const { return SkRect::Make(this->dimensions()); }
 
     /**
      * Retrieves the pixel config specified when the surface was created.
@@ -47,85 +46,113 @@ public:
      * if client asked us to render to a target that has a pixel
      * config that isn't equivalent with one of our configs.
      */
-    GrPixelConfig config() const { return fDesc.fConfig; }
+    GrPixelConfig config() const { return fConfig; }
+
+    virtual GrBackendFormat backendFormat() const = 0;
+
+    SK_API void setRelease(sk_sp<GrRefCntedCallback> releaseHelper) {
+        this->onSetRelease(releaseHelper);
+        fReleaseHelper = std::move(releaseHelper);
+    }
+
+    // These match the definitions in SkImage, from whence they came.
+    // TODO: Remove Chrome's need to call this on a GrTexture
+    typedef void* ReleaseCtx;
+    typedef void (*ReleaseProc)(ReleaseCtx);
+    SK_API void setRelease(ReleaseProc proc, ReleaseCtx ctx) {
+        sk_sp<GrRefCntedCallback> helper(new GrRefCntedCallback(proc, ctx));
+        this->setRelease(std::move(helper));
+    }
 
     /**
-     * Return the descriptor describing the surface
+     * @return the texture associated with the surface, may be null.
      */
-    const GrSurfaceDesc& desc() const { return fDesc; }
+    virtual GrTexture* asTexture() { return nullptr; }
+    virtual const GrTexture* asTexture() const { return nullptr; }
 
     /**
-     * @return the texture associated with the surface, may be NULL.
+     * @return the render target underlying this surface, may be null.
      */
-    virtual GrTexture* asTexture() { return NULL; }
-    virtual const GrTexture* asTexture() const { return NULL; }
-
-    /**
-     * @return the render target underlying this surface, may be NULL.
-     */
-    virtual GrRenderTarget* asRenderTarget() { return NULL; }
-    virtual const GrRenderTarget* asRenderTarget() const { return NULL; }
+    virtual GrRenderTarget* asRenderTarget() { return nullptr; }
+    virtual const GrRenderTarget* asRenderTarget() const { return nullptr; }
 
     /** Access methods that are only to be used within Skia code. */
     inline GrSurfacePriv surfacePriv();
     inline const GrSurfacePriv surfacePriv() const;
 
-    typedef void* ReleaseCtx;
-    typedef void (*ReleaseProc)(ReleaseCtx);
+    static size_t ComputeSize(const GrCaps&, const GrBackendFormat&, SkISize dimensions,
+                              int colorSamplesPerPixel, GrMipMapped, bool binSize = false);
 
-    void setRelease(ReleaseProc proc, ReleaseCtx ctx) {
-        fReleaseProc = proc;
-        fReleaseCtx = ctx;
-    }
+    /**
+     * The pixel values of this surface cannot be modified (e.g. doesn't support write pixels or
+     * MIP map level regen).
+     */
+    bool readOnly() const { return fSurfaceFlags & GrInternalSurfaceFlags::kReadOnly; }
 
-    void setLastOpList(GrOpList* opList);
-    GrOpList* getLastOpList() { return fLastOpList; }
-
-    static size_t WorstCaseSize(const GrSurfaceDesc& desc, bool useNextPow2 = false);
-    static size_t ComputeSize(const GrSurfaceDesc& desc, int colorSamplesPerPixel,
-                              bool hasMIPMaps, bool useNextPow2 = false);
+    // Returns true if we are working with protected content.
+    bool isProtected() const { return fIsProtected == GrProtected::kYes; }
 
 protected:
-    // Methods made available via GrSurfacePriv
-    bool hasPendingRead() const;
-    bool hasPendingWrite() const;
-    bool hasPendingIO() const;
+    void setGLRTFBOIDIs0() {
+        SkASSERT(!this->requiresManualMSAAResolve());
+        SkASSERT(!this->asTexture());
+        SkASSERT(this->asRenderTarget());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kGLRTFBOIDIs0;
+    }
+    bool glRTFBOIDis0() const {
+        return fSurfaceFlags & GrInternalSurfaceFlags::kGLRTFBOIDIs0;
+    }
+
+    void setRequiresManualMSAAResolve() {
+        SkASSERT(!this->glRTFBOIDis0());
+        SkASSERT(this->asRenderTarget());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kRequiresManualMSAAResolve;
+    }
+    bool requiresManualMSAAResolve() const {
+        return fSurfaceFlags & GrInternalSurfaceFlags::kRequiresManualMSAAResolve;
+    }
+
+    void setReadOnly() {
+        SkASSERT(!this->asRenderTarget());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kReadOnly;
+    }
 
     // Provides access to methods that should be public within Skia code.
     friend class GrSurfacePriv;
 
-    GrSurface(GrGpu* gpu, const GrSurfaceDesc& desc)
-        : INHERITED(gpu)
-        , fDesc(desc)
-        , fReleaseProc(NULL)
-        , fReleaseCtx(NULL)
-        , fLastOpList(nullptr) {
-    }
-    ~GrSurface() override;
+    GrSurface(GrGpu* gpu, const SkISize& dimensions, GrPixelConfig config, GrProtected isProtected)
+            : INHERITED(gpu)
+            , fConfig(config)
+            , fDimensions(dimensions)
+            , fSurfaceFlags(GrInternalSurfaceFlags::kNone)
+            , fIsProtected(isProtected) {}
 
-    GrSurfaceDesc fDesc;
+    ~GrSurface() override {
+        // check that invokeReleaseProc has been called (if needed)
+        SkASSERT(!fReleaseHelper);
+    }
 
     void onRelease() override;
     void onAbandon() override;
 
 private:
+    const char* getResourceType() const override { return "Surface"; }
+
+    // Unmanaged backends (e.g. Vulkan) may want to specially handle the release proc in order to
+    // ensure it isn't called until GPU work related to the resource is completed.
+    virtual void onSetRelease(sk_sp<GrRefCntedCallback>) {}
+
     void invokeReleaseProc() {
-        if (fReleaseProc) {
-            fReleaseProc(fReleaseCtx);
-            fReleaseProc = NULL;
-        }
+        // Depending on the ref count of fReleaseHelper this may or may not actually trigger the
+        // ReleaseProc to be called.
+        fReleaseHelper.reset();
     }
 
-    ReleaseProc fReleaseProc;
-    ReleaseCtx  fReleaseCtx;
-
-    // The last opList that wrote to or is currently going to write to this surface
-    // The opList can be closed (e.g., no render target or texture context is currently bound
-    // to this renderTarget or texture).
-    // This back-pointer is required so that we can add a dependancy between
-    // the opList used to create the current contents of this surface
-    // and the opList of a destination surface to which this one is being drawn or copied.
-    GrOpList* fLastOpList;
+    GrPixelConfig              fConfig;
+    SkISize                    fDimensions;
+    GrInternalSurfaceFlags     fSurfaceFlags;
+    GrProtected                fIsProtected;
+    sk_sp<GrRefCntedCallback>  fReleaseHelper;
 
     typedef GrGpuResource INHERITED;
 };

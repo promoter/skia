@@ -8,31 +8,20 @@
 #ifndef SkImageEncoderPriv_DEFINED
 #define SkImageEncoderPriv_DEFINED
 
-#include "SkImageEncoder.h"
+#include "include/core/SkImageEncoder.h"
+#include "include/private/SkImageInfoPriv.h"
 
-struct SkEncodeOptions {
-    SkTransferFunctionBehavior fUnpremulBehavior = SkTransferFunctionBehavior::kIgnore;
-};
+static inline bool SkPixmapIsValid(const SkPixmap& src) {
+    if (!SkImageInfoIsValid(src.info())) {
+        return false;
+    }
 
-#ifdef SK_HAS_JPEG_LIBRARY
-    bool SkEncodeImageAsJPEG(SkWStream*, const SkPixmap&, const SkEncodeOptions&);
-    bool SkEncodeImageAsJPEG(SkWStream*, const SkPixmap&, int quality);
-#else
-    #define SkEncodeImageAsJPEG(...) false
-#endif
+    if (!src.addr() || src.rowBytes() < src.info().minRowBytes()) {
+        return false;
+    }
 
-#ifdef SK_HAS_PNG_LIBRARY
-    bool SkEncodeImageAsPNG(SkWStream*, const SkPixmap&, const SkEncodeOptions&);
-#else
-    #define SkEncodeImageAsPNG(...) false
-#endif
-
-#ifdef SK_HAS_WEBP_LIBRARY
-    bool SkEncodeImageAsWEBP(SkWStream*, const SkPixmap&, const SkEncodeOptions&);
-    bool SkEncodeImageAsWEBP(SkWStream*, const SkPixmap&, int quality);
-#else
-    #define SkEncodeImageAsWEBP(...) false
-#endif
+    return true;
+}
 
 #if defined(SK_BUILD_FOR_MAC) || defined(SK_BUILD_FOR_IOS)
     bool SkEncodeImageWithCG(SkWStream*, const SkPixmap&, SkEncodedImageFormat);

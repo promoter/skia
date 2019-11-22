@@ -8,12 +8,11 @@
 #ifndef SkOpts_DEFINED
 #define SkOpts_DEFINED
 
-#include "SkConvolver.h"
-#include "SkRasterPipeline.h"
-#include "SkTypes.h"
-#include "SkXfermodePriv.h"
+#include "include/core/SkTypes.h"
+#include "src/core/SkRasterPipeline.h"
+#include "src/core/SkXfermodePriv.h"
 
-struct ProcCoeff;
+struct SkBitmapProcState;
 
 namespace SkOpts {
     // Call to replace pointers to portable functions with pointers to CPU-specific functions.
@@ -24,34 +23,36 @@ namespace SkOpts {
     // Declare function pointers here...
 
     // May return nullptr if we haven't specialized the given Mode.
-    extern SkXfermode* (*create_xfermode)(const ProcCoeff&, SkBlendMode);
-
-    typedef void (*BoxBlur)(const SkPMColor*, int, const SkIRect& srcBounds, SkPMColor*, int, int, int, int, int);
-    extern BoxBlur box_blur_xx, box_blur_xy, box_blur_yx;
-
-    typedef void (*Morph)(const SkPMColor*, SkPMColor*, int, int, int, int, int);
-    extern Morph dilate_x, dilate_y, erode_x, erode_y;
+    extern SkXfermode* (*create_xfermode)(SkBlendMode);
 
     extern void (*blit_mask_d32_a8)(SkPMColor*, size_t, const SkAlpha*, size_t, SkColor, int, int);
     extern void (*blit_row_color32)(SkPMColor*, const SkPMColor*, int, SkPMColor);
     extern void (*blit_row_s32a_opaque)(SkPMColor*, const SkPMColor*, int, U8CPU);
 
     // Swizzle input into some sort of 8888 pixel, {premul,unpremul} x {rgba,bgra}.
-    typedef void (*Swizzle_8888)(uint32_t*, const void*, int);
-    extern Swizzle_8888 RGBA_to_BGRA,          // i.e. just swap RB
-                        RGBA_to_rgbA,          // i.e. just premultiply
-                        RGBA_to_bgrA,          // i.e. swap RB and premultiply
-                        RGB_to_RGB1,           // i.e. insert an opaque alpha
-                        RGB_to_BGR1,           // i.e. swap RB and insert an opaque alpha
-                        gray_to_RGB1,          // i.e. expand to color channels + an opaque alpha
-                        grayA_to_RGBA,         // i.e. expand to color channels
-                        grayA_to_rgbA,         // i.e. expand to color channels and premultiply
-                        inverted_CMYK_to_RGB1, // i.e. convert color space
-                        inverted_CMYK_to_BGR1; // i.e. convert color space
+    typedef void (*Swizzle_8888_u32)(uint32_t*, const uint32_t*, int);
+    extern Swizzle_8888_u32 RGBA_to_BGRA,          // i.e. just swap RB
+                            RGBA_to_rgbA,          // i.e. just premultiply
+                            RGBA_to_bgrA,          // i.e. swap RB and premultiply
+                            inverted_CMYK_to_RGB1, // i.e. convert color space
+                            inverted_CMYK_to_BGR1; // i.e. convert color space
 
-    // Blend ndst src pixels over dst, where both src and dst point to sRGB pixels (RGBA or BGRA).
-    // If nsrc < ndst, we loop over src to create a pattern.
-    extern void (*srcover_srgb_srgb)(uint32_t* dst, const uint32_t* src, int ndst, int nsrc);
+    typedef void (*Swizzle_8888_u8)(uint32_t*, const uint8_t*, int);
+    extern Swizzle_8888_u8 RGB_to_RGB1,     // i.e. insert an opaque alpha
+                           RGB_to_BGR1,     // i.e. swap RB and insert an opaque alpha
+                           gray_to_RGB1,    // i.e. expand to color channels + an opaque alpha
+                           grayA_to_RGBA,   // i.e. expand to color channels
+                           grayA_to_rgbA;   // i.e. expand to color channels and premultiply
+
+    extern void (*memset16)(uint16_t[], uint16_t, int);
+    extern void SK_SPI(*memset32)(uint32_t[], uint32_t, int);
+    extern void (*memset64)(uint64_t[], uint64_t, int);
+
+    extern void (*rect_memset16)(uint16_t[], uint16_t, int, size_t, int);
+    extern void (*rect_memset32)(uint32_t[], uint32_t, int, size_t, int);
+    extern void (*rect_memset64)(uint64_t[], uint64_t, int, size_t, int);
+
+    extern float (*cubic_solver)(float, float, float, float);
 
     // The fastest high quality 32-bit hash we can provide on this platform.
     extern uint32_t (*hash_fn)(const void*, size_t, uint32_t seed);
@@ -59,16 +60,23 @@ namespace SkOpts {
         return hash_fn(data, bytes, seed);
     }
 
-    extern void (*run_pipeline)(size_t, size_t, const SkRasterPipeline::Stage*, int);
+    // SkBitmapProcState optimized Shader, Sample, or Matrix procs.
+    extern void (*S32_alpha_D32_filter_DX)(const SkBitmapProcState&,
+                                           const uint32_t* xy, int count, SkPMColor*);
+    extern void (*S32_alpha_D32_filter_DXDY)(const SkBitmapProcState&,
+                                             const uint32_t* xy, int count, SkPMColor*);
 
-    extern void (*convolve_vertically)(const SkConvolutionFilter1D::ConvolutionFixed* filter_values,
-                                       int filter_length, unsigned char* const* source_data_rows,
-                                       int pixel_width, unsigned char* out_row, bool has_alpha);
-    extern void (*convolve_4_rows_horizontally)(const unsigned char* src_data[4],
-                                                const SkConvolutionFilter1D& filter,
-                                                unsigned char* out_row[4], size_t out_row_bytes);
-    extern void (*convolve_horizontally)(const unsigned char* src_data, const SkConvolutionFilter1D& filter,
-                                         unsigned char* out_row, bool has_alpha);
+#define M(st) +1
+    // We can't necessarily express the type of SkJumper stage functions here,
+    // so we just use this void(*)(void) as a stand-in.
+    using StageFn = void(*)(void);
+    extern StageFn stages_highp[SK_RASTER_PIPELINE_STAGES(M)], just_return_highp;
+    extern StageFn stages_lowp [SK_RASTER_PIPELINE_STAGES(M)], just_return_lowp;
+
+    extern void (*start_pipeline_highp)(size_t,size_t,size_t,size_t, void**);
+    extern void (*start_pipeline_lowp )(size_t,size_t,size_t,size_t, void**);
+#undef M
+
 }
 
 #endif//SkOpts_DEFINED

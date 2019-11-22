@@ -9,8 +9,8 @@
 #ifndef SkJpegUtility_DEFINED
 #define SkJpegUtility_DEFINED
 
-#include "SkJpegPriv.h"
-#include "SkStream.h"
+#include "include/core/SkStream.h"
+#include "src/codec/SkJpegPriv.h"
 
 extern "C" {
     #include "jpeglib.h"
@@ -25,7 +25,7 @@ void skjpeg_error_exit(j_common_ptr cinfo);
 /* Our destination struct for directing decompressed pixels to our stream
  * object.
  */
-struct skjpeg_destination_mgr : jpeg_destination_mgr {
+struct SK_SPI skjpeg_destination_mgr : jpeg_destination_mgr {
     skjpeg_destination_mgr(SkWStream* stream);
 
     SkWStream*  fStream;

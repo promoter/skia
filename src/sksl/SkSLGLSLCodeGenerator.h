@@ -12,34 +12,36 @@
 #include <tuple>
 #include <unordered_map>
 
-#include "SkSLCodeGenerator.h"
-#include "ir/SkSLBinaryExpression.h"
-#include "ir/SkSLBoolLiteral.h"
-#include "ir/SkSLConstructor.h"
-#include "ir/SkSLDoStatement.h"
-#include "ir/SkSLExtension.h"
-#include "ir/SkSLFloatLiteral.h"
-#include "ir/SkSLIfStatement.h"
-#include "ir/SkSLIndexExpression.h"
-#include "ir/SkSLInterfaceBlock.h"
-#include "ir/SkSLIntLiteral.h"
-#include "ir/SkSLFieldAccess.h"
-#include "ir/SkSLForStatement.h"
-#include "ir/SkSLFunctionCall.h"
-#include "ir/SkSLFunctionDeclaration.h"
-#include "ir/SkSLFunctionDefinition.h"
-#include "ir/SkSLPrefixExpression.h"
-#include "ir/SkSLPostfixExpression.h"
-#include "ir/SkSLProgramElement.h"
-#include "ir/SkSLReturnStatement.h"
-#include "ir/SkSLStatement.h"
-#include "ir/SkSLSwitchStatement.h"
-#include "ir/SkSLSwizzle.h"
-#include "ir/SkSLTernaryExpression.h"
-#include "ir/SkSLVarDeclarations.h"
-#include "ir/SkSLVarDeclarationsStatement.h"
-#include "ir/SkSLVariableReference.h"
-#include "ir/SkSLWhileStatement.h"
+#include "src/sksl/SkSLCodeGenerator.h"
+#include "src/sksl/SkSLStringStream.h"
+#include "src/sksl/ir/SkSLBinaryExpression.h"
+#include "src/sksl/ir/SkSLBoolLiteral.h"
+#include "src/sksl/ir/SkSLConstructor.h"
+#include "src/sksl/ir/SkSLDoStatement.h"
+#include "src/sksl/ir/SkSLExtension.h"
+#include "src/sksl/ir/SkSLFieldAccess.h"
+#include "src/sksl/ir/SkSLFloatLiteral.h"
+#include "src/sksl/ir/SkSLForStatement.h"
+#include "src/sksl/ir/SkSLFunctionCall.h"
+#include "src/sksl/ir/SkSLFunctionDeclaration.h"
+#include "src/sksl/ir/SkSLFunctionDefinition.h"
+#include "src/sksl/ir/SkSLIfStatement.h"
+#include "src/sksl/ir/SkSLIndexExpression.h"
+#include "src/sksl/ir/SkSLIntLiteral.h"
+#include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLPostfixExpression.h"
+#include "src/sksl/ir/SkSLPrefixExpression.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
+#include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLSetting.h"
+#include "src/sksl/ir/SkSLStatement.h"
+#include "src/sksl/ir/SkSLSwitchStatement.h"
+#include "src/sksl/ir/SkSLSwizzle.h"
+#include "src/sksl/ir/SkSLTernaryExpression.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
+#include "src/sksl/ir/SkSLVarDeclarationsStatement.h"
+#include "src/sksl/ir/SkSLVariableReference.h"
+#include "src/sksl/ir/SkSLWhileStatement.h"
 
 namespace SkSL {
 
@@ -68,17 +70,24 @@ public:
         kTernary_Precedence        = 15,
         kAssignment_Precedence     = 16,
         kSequence_Precedence       = 17,
-        kTopLevel_Precedence       = 18
+        kTopLevel_Precedence       = kSequence_Precedence
     };
 
     GLSLCodeGenerator(const Context* context, const Program* program, ErrorReporter* errors,
                       OutputStream* out)
     : INHERITED(program, errors, out)
-    , fContext(*context) {}
+    , fLineEnding("\n")
+    , fContext(*context)
+    , fProgramKind(program->fKind) {}
 
-    virtual bool generateCode() override;
+    bool generateCode() override;
 
-private:
+protected:
+    enum class SwizzleOrder {
+        MASK_FIRST,
+        CONSTANTS_FIRST
+    };
+
     void write(const char* s);
 
     void writeLine();
@@ -87,11 +96,21 @@ private:
 
     void write(const String& s);
 
+    void write(StringFragment s);
+
     void writeLine(const String& s);
+
+    virtual void writeHeader();
+
+    virtual bool usesPrecisionModifiers() const;
+
+    virtual String getTypeName(const Type& type);
 
     void writeType(const Type& type);
 
-    void writeExtension(const Extension& ext);
+    void writeExtension(const String& name);
+
+    void writeExtension(const String& name, bool require);
 
     void writeInterfaceBlock(const InterfaceBlock& intf);
 
@@ -99,19 +118,25 @@ private:
 
     void writeFunctionDeclaration(const FunctionDeclaration& f);
 
-    void writeFunction(const FunctionDefinition& f);
+    virtual void writeFunction(const FunctionDefinition& f);
 
     void writeLayout(const Layout& layout);
 
     void writeModifiers(const Modifiers& modifiers, bool globalContext);
 
-    void writeGlobalVars(const VarDeclaration& vs);
+    virtual void writeInputVars();
+
+    virtual void writeVarInitializer(const Variable& var, const Expression& value);
+
+    const char* getTypePrecision(const Type& type);
+
+    void writeTypePrecision(const Type& type);
 
     void writeVarDeclarations(const VarDeclarations& decl, bool global);
 
     void writeFragCoord();
 
-    void writeVariableReference(const VariableReference& ref);
+    virtual void writeVariableReference(const VariableReference& ref);
 
     void writeExpression(const Expression& expr, Precedence parentPrecedence);
 
@@ -119,19 +144,40 @@ private:
 
     void writeMinAbsHack(Expression& absExpr, Expression& otherExpr);
 
-    void writeFunctionCall(const FunctionCall& c);
+    void writeDeterminantHack(const Expression& mat);
 
-    void writeConstructor(const Constructor& c);
+    void writeInverseHack(const Expression& mat);
 
-    void writeFieldAccess(const FieldAccess& f);
+    void writeTransposeHack(const Expression& mat);
 
-    void writeSwizzle(const Swizzle& swizzle);
+    void writeInverseSqrtHack(const Expression& x);
 
-    void writeBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence);
+    virtual void writeFunctionCall(const FunctionCall& c);
+
+    void writeConstructor(const Constructor& c, Precedence parentPrecedence);
+
+    virtual void writeFieldAccess(const FieldAccess& f);
+
+    void writeConstantSwizzle(const Swizzle& swizzle, const String& constants);
+
+    void writeSwizzleMask(const Swizzle& swizzle, const String& mask);
+
+    void writeSwizzleConstructor(const Swizzle& swizzle, const String& constants,
+                                 const String& mask, SwizzleOrder order);
+
+    void writeSwizzleConstructor(const Swizzle& swizzle, const String& constants,
+                                 const String& mask, const String& reswizzle);
+    virtual void writeSwizzle(const Swizzle& swizzle);
+
+    static Precedence GetBinaryPrecedence(Token::Kind op);
+
+    virtual void writeBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence);
+    void writeShortCircuitWorkaroundExpression(const BinaryExpression& b,
+                                               Precedence parentPrecedence);
 
     void writeTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
 
-    void writeIndexExpression(const IndexExpression& expr);
+    virtual void writeIndexExpression(const IndexExpression& expr);
 
     void writePrefixExpression(const PrefixExpression& p, Precedence parentPrecedence);
 
@@ -139,15 +185,19 @@ private:
 
     void writeBoolLiteral(const BoolLiteral& b);
 
-    void writeIntLiteral(const IntLiteral& i);
+    virtual void writeIntLiteral(const IntLiteral& i);
 
     void writeFloatLiteral(const FloatLiteral& f);
 
+    virtual void writeSetting(const Setting& s);
+
     void writeStatement(const Statement& s);
+
+    void writeStatements(const std::vector<std::unique_ptr<Statement>>& statements);
 
     void writeBlock(const Block& b);
 
-    void writeIfStatement(const IfStatement& stmt);
+    virtual void writeIfStatement(const IfStatement& stmt);
 
     void writeForStatement(const ForStatement& f);
 
@@ -155,12 +205,17 @@ private:
 
     void writeDoStatement(const DoStatement& d);
 
-    void writeSwitchStatement(const SwitchStatement& s);
+    virtual void writeSwitchStatement(const SwitchStatement& s);
 
-    void writeReturnStatement(const ReturnStatement& r);
+    virtual void writeReturnStatement(const ReturnStatement& r);
 
+    virtual void writeProgramElement(const ProgramElement& e);
+
+    const char* fLineEnding;
     const Context& fContext;
-    StringStream fHeader;
+    StringStream fExtensions;
+    StringStream fGlobals;
+    StringStream fExtraFunctions;
     String fFunctionHeader;
     Program::Kind fProgramKind;
     int fVarCount = 0;
@@ -170,11 +225,38 @@ private:
     // more than one or two structs per shader, a simple linear search will be faster than anything
     // fancier.
     std::vector<const Type*> fWrittenStructs;
+    std::set<String> fWrittenIntrinsics;
     // true if we have run into usages of dFdx / dFdy
     bool fFoundDerivatives = false;
-    bool fFoundImageDecl = false;
+    bool fFoundExternalSamplerDecl = false;
+    bool fFoundRectSamplerDecl = false;
+    bool fFoundGSInvocations = false;
     bool fSetupFragPositionGlobal = false;
     bool fSetupFragPositionLocal = false;
+    bool fSetupFragCoordWorkaround = false;
+    // if non-empty, replace all texture / texture2D / textureProj / etc. calls with this name
+    String fTextureFunctionOverride;
+
+    // We map function names to function class so we can quickly deal with function calls that need
+    // extra processing
+    enum class FunctionClass {
+        kAbs,
+        kAtan,
+        kDeterminant,
+        kDFdx,
+        kDFdy,
+        kFwidth,
+        kFMA,
+        kFract,
+        kInverse,
+        kInverseSqrt,
+        kMin,
+        kPow,
+        kSaturate,
+        kTexture,
+        kTranspose
+    };
+    static std::unordered_map<StringFragment, FunctionClass>* fFunctionClasses;
 
     typedef CodeGenerator INHERITED;
 };

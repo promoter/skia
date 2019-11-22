@@ -8,87 +8,43 @@
 #ifndef GrGeometryProcessor_DEFINED
 #define GrGeometryProcessor_DEFINED
 
-#include "GrPrimitiveProcessor.h"
+#include "src/gpu/GrPrimitiveProcessor.h"
 
 /**
  * A GrGeometryProcessor is a flexible method for rendering a primitive.  The GrGeometryProcessor
- * has complete control over vertex attributes and uniforms(aside from the render target) but it
+ * has complete control over vertex attributes and uniforms (aside from the render target) but it
  * must obey the same contract as any GrPrimitiveProcessor, specifically it must emit a color and
  * coverage into the fragment shader.  Where this color and coverage come from is completely the
  * responsibility of the GrGeometryProcessor.
+ *
+ * Note that all derived classes should hide their constructors and provide a Make factory
+ * function that takes an arena (except for CCPR-specific classes). This is because
+ * GrGeometryProcessor's are not ref-counted to must have some other mechanism for managing
+ * their lifetime. In particular, geometry processors can be created in either the
+ * record-time or flush-time arenas which defined their lifetimes (i.e., a DDLs life time in
+ * the first case and a single flush in the second case).
  */
 class GrGeometryProcessor : public GrPrimitiveProcessor {
 public:
-    GrGeometryProcessor()
-        : fWillUseGeoShader(false)
-        , fLocalCoordsType(kUnused_LocalCoordsType)
-        , fSampleShading(0.0) {}
+    GrGeometryProcessor(ClassID classID)
+        : INHERITED(classID)
+        , fWillUseGeoShader(false) {}
 
-    bool willUseGeoShader() const override { return fWillUseGeoShader; }
-
-    bool hasExplicitLocalCoords() const override {
-        return kHasExplicit_LocalCoordsType == fLocalCoordsType;
-    }
-
-    /**
-     * Returns the minimum fraction of samples for which the fragment shader will be run. For
-     * instance, if sampleShading is 0.5 in MSAA16 mode, the fragment shader will run a minimum of
-     * 8 times per pixel. The default value is zero.
-     */
-    float getSampleShading() const override {
-        return fSampleShading;
-    }
+    bool willUseGeoShader() const final { return fWillUseGeoShader; }
 
 protected:
-    /**
-     * Subclasses call this from their constructor to register vertex attributes.  Attributes
-     * will be padded to the nearest 4 bytes for performance reasons.
-     * TODO After deferred geometry, we should do all of this inline in GenerateGeometry alongside
-     * the struct used to actually populate the attributes.  This is all extremely fragile, vertex
-     * attributes have to be added in the order they will appear in the struct which maps memory.
-     * The processor key should reflect the vertex attributes, or there lack thereof in the
-     * GrGeometryProcessor.
-     */
-    const Attribute& addVertexAttrib(const char* name, GrVertexAttribType type,
-                                     GrSLPrecision precision = kDefault_GrSLPrecision) {
-        precision = (kDefault_GrSLPrecision == precision) ? kMedium_GrSLPrecision : precision;
-        fAttribs.emplace_back(name, type, precision);
-        fVertexStride += fAttribs.back().fOffset;
-        return fAttribs.back();
-    }
-
     void setWillUseGeoShader() { fWillUseGeoShader = true; }
 
-    /**
-     * If a GrFragmentProcessor in the GrPipeline needs localCoods, we will provide them in one of
-     * three ways
-     * 1) LocalCoordTransform * Position - in Shader
-     * 2) LocalCoordTransform * ExplicitLocalCoords- in Shader
-     * 3) A transformation on the CPU uploaded via vertex attribute
-     */
-    enum LocalCoordsType {
-        kUnused_LocalCoordsType,
-        kHasExplicit_LocalCoordsType,
-        kHasTransformed_LocalCoordsType
-    };
-
-    void setHasExplicitLocalCoords() {
-        SkASSERT(kUnused_LocalCoordsType == fLocalCoordsType);
-        fLocalCoordsType = kHasExplicit_LocalCoordsType;
-    }
-    void setHasTransformedLocalCoords() {
-        SkASSERT(kUnused_LocalCoordsType == fLocalCoordsType);
-        fLocalCoordsType = kHasTransformed_LocalCoordsType;
-    }
-
-    void setSampleShading(float sampleShading) {
-        fSampleShading = sampleShading;
+    // GPs that need to use either half-float or ubyte colors can just call this to get a correctly
+    // configured Attribute struct
+    static Attribute MakeColorAttribute(const char* name, bool wideColor) {
+        return { name,
+                 wideColor ? kHalf4_GrVertexAttribType : kUByte4_norm_GrVertexAttribType,
+                 kHalf4_GrSLType };
     }
 
 private:
     bool fWillUseGeoShader;
-    LocalCoordsType fLocalCoordsType;
-    float fSampleShading;
 
     typedef GrPrimitiveProcessor INHERITED;
 };

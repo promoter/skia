@@ -5,17 +5,17 @@
  * found in the LICENSE file.
  */
 
-#include "SkImage.h"
-#include "SkImageGenerator.h"
-#include "SkNextID.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkImageGenerator.h"
+#include "include/core/SkYUVAIndex.h"
+#include "src/core/SkNextID.h"
 
 SkImageGenerator::SkImageGenerator(const SkImageInfo& info, uint32_t uniqueID)
     : fInfo(info)
     , fUniqueID(kNeedNewImageUniqueID == uniqueID ? SkNextID::ImageID() : uniqueID)
 {}
 
-bool SkImageGenerator::getPixels(const SkImageInfo& info, void* pixels, size_t rowBytes,
-                                 SkPMColor ctable[], int* ctableCount) {
+bool SkImageGenerator::getPixels(const SkImageInfo& info, void* pixels, size_t rowBytes) {
     if (kUnknown_SkColorType == info.colorType()) {
         return false;
     }
@@ -26,101 +26,66 @@ bool SkImageGenerator::getPixels(const SkImageInfo& info, void* pixels, size_t r
         return false;
     }
 
-    if (kIndex_8_SkColorType == info.colorType()) {
-        if (nullptr == ctable || nullptr == ctableCount) {
-            return false;
-        }
-    } else {
-        if (ctableCount) {
-            *ctableCount = 0;
-        }
-        ctableCount = nullptr;
-        ctable = nullptr;
-    }
-
-    const bool success = this->onGetPixels(info, pixels, rowBytes, ctable, ctableCount);
-    if (success && ctableCount) {
-        SkASSERT(*ctableCount >= 0 && *ctableCount <= 256);
-    }
-    return success;
-}
-
-bool SkImageGenerator::getPixels(const SkImageInfo& info, void* pixels, size_t rowBytes,
-                                 const Options* opts) {
     Options defaultOpts;
-    if (!opts) {
-        opts = &defaultOpts;
-    }
-    return this->onGetPixels(info, pixels, rowBytes, *opts);
+    return this->onGetPixels(info, pixels, rowBytes, defaultOpts);
 }
 
-bool SkImageGenerator::getPixels(const SkImageInfo& info, void* pixels, size_t rowBytes) {
-    SkASSERT(kIndex_8_SkColorType != info.colorType());
-    if (kIndex_8_SkColorType == info.colorType()) {
-        return false;
-    }
-    return this->getPixels(info, pixels, rowBytes, nullptr, nullptr);
-}
-
-bool SkImageGenerator::queryYUV8(SkYUVSizeInfo* sizeInfo, SkYUVColorSpace* colorSpace) const {
+bool SkImageGenerator::queryYUVA8(SkYUVASizeInfo* sizeInfo,
+                                  SkYUVAIndex yuvaIndices[SkYUVAIndex::kIndexCount],
+                                  SkYUVColorSpace* colorSpace) const {
     SkASSERT(sizeInfo);
 
-    return this->onQueryYUV8(sizeInfo, colorSpace);
+    return this->onQueryYUVA8(sizeInfo, yuvaIndices, colorSpace);
 }
 
-bool SkImageGenerator::getYUV8Planes(const SkYUVSizeInfo& sizeInfo, void* planes[3]) {
-    SkASSERT(sizeInfo.fSizes[SkYUVSizeInfo::kY].fWidth >= 0);
-    SkASSERT(sizeInfo.fSizes[SkYUVSizeInfo::kY].fHeight >= 0);
-    SkASSERT(sizeInfo.fSizes[SkYUVSizeInfo::kU].fWidth >= 0);
-    SkASSERT(sizeInfo.fSizes[SkYUVSizeInfo::kU].fHeight >= 0);
-    SkASSERT(sizeInfo.fSizes[SkYUVSizeInfo::kV].fWidth >= 0);
-    SkASSERT(sizeInfo.fSizes[SkYUVSizeInfo::kV].fHeight >= 0);
-    SkASSERT(sizeInfo.fWidthBytes[SkYUVSizeInfo::kY] >=
-            (size_t) sizeInfo.fSizes[SkYUVSizeInfo::kY].fWidth);
-    SkASSERT(sizeInfo.fWidthBytes[SkYUVSizeInfo::kU] >=
-            (size_t) sizeInfo.fSizes[SkYUVSizeInfo::kU].fWidth);
-    SkASSERT(sizeInfo.fWidthBytes[SkYUVSizeInfo::kV] >=
-            (size_t) sizeInfo.fSizes[SkYUVSizeInfo::kV].fWidth);
-    SkASSERT(planes && planes[0] && planes[1] && planes[2]);
+bool SkImageGenerator::getYUVA8Planes(const SkYUVASizeInfo& sizeInfo,
+                                      const SkYUVAIndex yuvaIndices[SkYUVAIndex::kIndexCount],
+                                      void* planes[SkYUVASizeInfo::kMaxCount]) {
 
-    return this->onGetYUV8Planes(sizeInfo, planes);
+    for (int i = 0; i < SkYUVASizeInfo::kMaxCount; ++i) {
+        SkASSERT(sizeInfo.fSizes[i].fWidth >= 0);
+        SkASSERT(sizeInfo.fSizes[i].fHeight >= 0);
+        SkASSERT(sizeInfo.fWidthBytes[i] >= (size_t) sizeInfo.fSizes[i].fWidth);
+    }
+
+    int numPlanes = 0;
+    SkASSERT(SkYUVAIndex::AreValidIndices(yuvaIndices, &numPlanes));
+    SkASSERT(planes);
+    for (int i = 0; i < numPlanes; ++i) {
+        SkASSERT(planes[i]);
+    }
+
+    return this->onGetYUVA8Planes(sizeInfo, yuvaIndices, planes);
 }
 
 #if SK_SUPPORT_GPU
-#include "GrTextureProxy.h"
+#include "src/gpu/GrTextureProxy.h"
 
-sk_sp<GrTextureProxy> SkImageGenerator::generateTexture(GrContext* ctx, const SkImageInfo& info,
-                                                        const SkIPoint& origin) {
+sk_sp<GrTextureProxy> SkImageGenerator::generateTexture(GrRecordingContext* ctx,
+                                                        const SkImageInfo& info,
+                                                        const SkIPoint& origin,
+                                                        bool willNeedMipMaps) {
     SkIRect srcRect = SkIRect::MakeXYWH(origin.x(), origin.y(), info.width(), info.height());
     if (!SkIRect::MakeWH(fInfo.width(), fInfo.height()).contains(srcRect)) {
         return nullptr;
     }
-    return this->onGenerateTexture(ctx, info, origin);
+    return this->onGenerateTexture(ctx, info, origin, willNeedMipMaps);
 }
 
-sk_sp<GrTextureProxy> SkImageGenerator::onGenerateTexture(GrContext*, const SkImageInfo&,
-                                                          const SkIPoint&) {
+sk_sp<GrTextureProxy> SkImageGenerator::onGenerateTexture(GrRecordingContext*,
+                                                          const SkImageInfo&,
+                                                          const SkIPoint&,
+                                                          bool willNeedMipMaps) {
     return nullptr;
 }
 #endif
 
-/////////////////////////////////////////////////////////////////////////////////////////////
-
-SkData* SkImageGenerator::onRefEncodedData(GrContext* ctx) {
-    return nullptr;
-}
-
-bool SkImageGenerator::onGetPixels(const SkImageInfo& info, void* dst, size_t rb,
-                                   SkPMColor* colors, int* colorCount) {
-    return false;
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "SkBitmap.h"
-#include "SkColorTable.h"
+#include "include/core/SkBitmap.h"
+#include "src/codec/SkColorTable.h"
 
-#include "SkGraphics.h"
+#include "include/core/SkGraphics.h"
 
 static SkGraphics::ImageGeneratorFromEncodedDataFactory gFactory;
 

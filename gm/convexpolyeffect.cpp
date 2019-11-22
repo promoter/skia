@@ -7,23 +7,49 @@
 
 // This test only works with the GPU backend.
 
-#include "gm.h"
+#include "gm/gm.h"
+#include "include/core/SkBlendMode.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkMatrix.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypes.h"
+#include "include/gpu/GrContext.h"
+#include "include/private/GrRecordingContext.h"
+#include "include/private/GrSharedEnums.h"
+#include "include/private/GrTypesPriv.h"
+#include "include/private/SkColorData.h"
+#include "src/core/SkPointPriv.h"
+#include "src/core/SkTLList.h"
+#include "src/gpu/GrCaps.h"
+#include "src/gpu/GrDefaultGeoProcFactory.h"
+#include "src/gpu/GrFragmentProcessor.h"
+#include "src/gpu/GrGeometryProcessor.h"
+#include "src/gpu/GrMemoryPool.h"
+#include "src/gpu/GrOpFlushState.h"
+#include "src/gpu/GrPaint.h"
+#include "src/gpu/GrProcessorAnalysis.h"
+#include "src/gpu/GrProcessorSet.h"
+#include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrRenderTargetContextPriv.h"
+#include "src/gpu/GrUserStencilSettings.h"
+#include "src/gpu/effects/GrConvexPolyEffect.h"
+#include "src/gpu/effects/GrPorterDuffXferProcessor.h"
+#include "src/gpu/ops/GrDrawOp.h"
+#include "src/gpu/ops/GrMeshDrawOp.h"
+#include "src/gpu/ops/GrOp.h"
 
-#if SK_SUPPORT_GPU
+#include <memory>
+#include <utility>
 
-#include "GrContext.h"
-#include "GrDefaultGeoProcFactory.h"
-#include "GrRenderTargetContextPriv.h"
-#include "GrPathUtils.h"
-#include "GrTest.h"
-#include "SkColorPriv.h"
-#include "SkGeometry.h"
-#include "SkTLList.h"
-
-#include "ops/GrMeshDrawOp.h"
-#include "ops/GrTestMeshDrawOp.h"
-
-#include "effects/GrConvexPolyEffect.h"
+class GrAppliedClip;
 
 /** outset rendered rect to visualize anti-aliased poly edges */
 static SkRect outset(const SkRect& unsorted) {
@@ -40,49 +66,82 @@ static SkRect sorted_rect(const SkRect& unsorted) {
 }
 
 namespace skiagm {
-class PolyBoundsOp : public GrTestMeshDrawOp {
+class PolyBoundsOp : public GrMeshDrawOp {
 public:
     DEFINE_OP_CLASS_ID
 
+    static std::unique_ptr<GrDrawOp> Make(GrRecordingContext* context,
+                                          GrPaint&& paint,
+                                          const SkRect& rect) {
+        GrOpMemoryPool* pool = context->priv().opMemoryPool();
+
+        return pool->allocate<PolyBoundsOp>(std::move(paint), rect);
+    }
+
     const char* name() const override { return "PolyBoundsOp"; }
 
-    static std::unique_ptr<GrLegacyMeshDrawOp> Make(const SkRect& rect, GrColor color) {
-        return std::unique_ptr<GrLegacyMeshDrawOp>(new PolyBoundsOp(rect, color));
+    void visitProxies(const VisitProxyFunc& func) const override {
+        fProcessors.visitProxies(func);
+    }
+
+    FixedFunctionFlags fixedFunctionFlags() const override { return FixedFunctionFlags::kNone; }
+
+    GrProcessorSet::Analysis finalize(
+            const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
+            GrClampType clampType) override {
+        return fProcessors.finalize(
+                fColor, GrProcessorAnalysisCoverage::kNone, clip, &GrUserStencilSettings::kUnused,
+                hasMixedSampledCoverage, caps, clampType, &fColor);
     }
 
 private:
-    PolyBoundsOp(const SkRect& rect, GrColor color)
-            : INHERITED(ClassID(), outset(sorted_rect(rect)), color), fRect(outset(rect)) {}
+    friend class ::GrOpMemoryPool; // for ctor
 
-    void onPrepareDraws(Target* target) const override {
+    PolyBoundsOp(GrPaint&& paint, const SkRect& rect)
+            : INHERITED(ClassID())
+            , fColor(paint.getColor4f())
+            , fProcessors(std::move(paint))
+            , fRect(outset(rect)) {
+        this->setBounds(sorted_rect(fRect), HasAABloat::kNo, IsHairline::kNo);
+    }
+
+    void onPrepareDraws(Target* target) override {
         using namespace GrDefaultGeoProcFactory;
 
-        Color color(this->color());
-        sk_sp<GrGeometryProcessor> gp(GrDefaultGeoProcFactory::Make(
-                color, Coverage::kSolid_Type, LocalCoords::kUnused_Type, SkMatrix::I()));
+        Color color(fColor);
+        GrGeometryProcessor* gp = GrDefaultGeoProcFactory::Make(target->allocator(),
+                                                                target->caps().shaderCaps(),
+                                                                color,
+                                                                Coverage::kSolid_Type,
+                                                                LocalCoords::kUnused_Type,
+                                                                SkMatrix::I());
 
-        size_t vertexStride = gp->getVertexStride();
-        SkASSERT(vertexStride == sizeof(SkPoint));
-        QuadHelper helper;
-        SkPoint* verts = reinterpret_cast<SkPoint*>(helper.init(target, vertexStride, 1));
+        SkASSERT(gp->vertexStride() == sizeof(SkPoint));
+        QuadHelper helper(target, sizeof(SkPoint), 1);
+        SkPoint* verts = reinterpret_cast<SkPoint*>(helper.vertices());
         if (!verts) {
             return;
         }
 
-        fRect.toQuad(verts);
-
-        helper.recordDraw(target, gp.get(), this->pipeline());
+        SkPointPriv::SetRectTriStrip(verts, fRect, sizeof(SkPoint));
+        helper.recordDraw(target, gp);
     }
 
+    void onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) override {
+        flushState->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds, std::move(fProcessors));
+    }
+
+    SkPMColor4f fColor;
+    GrProcessorSet fProcessors;
     SkRect fRect;
 
-    typedef GrTestMeshDrawOp INHERITED;
+    typedef GrMeshDrawOp INHERITED;
 };
 
 /**
  * This GM directly exercises a GrProcessor that draws convex polygons.
  */
-class ConvexPolyEffect : public GM {
+class ConvexPolyEffect : public GpuGM {
 public:
     ConvexPolyEffect() {
         this->setBGColor(0xFFFFFFFF);
@@ -114,8 +173,7 @@ protected:
         const SkPoint center = { kRadius, kRadius };
         for (int i = 0; i < GrConvexPolyEffect::kMaxEdges; ++i) {
             SkScalar angle = 2 * SK_ScalarPI * i / GrConvexPolyEffect::kMaxEdges;
-            SkPoint point;
-            point.fY = SkScalarSinCos(angle, &point.fX);
+            SkPoint point = { SkScalarCos(angle), SkScalarSin(angle) };
             point.scale(kRadius);
             point = center + point;
             if (0 == i) {
@@ -152,14 +210,8 @@ protected:
         fRects.addToTail(SkRect::MakeLTRB(100.f, 50.5f, 5.f, 0.5f));
     }
 
-    void onDraw(SkCanvas* canvas) override {
-        GrRenderTargetContext* renderTargetContext =
-            canvas->internal_private_accessTopLayerRenderTargetContext();
-        if (!renderTargetContext) {
-            skiagm::GM::DrawGpuOnlyMessage(canvas);
-            return;
-        }
-
+    void onDraw(GrContext* context, GrRenderTargetContext* renderTargetContext,
+                SkCanvas* canvas) override {
         SkScalar y = 0;
         constexpr SkScalar kDX = 12.f;
         for (PathList::Iter iter(fPaths, PathList::Iter::kHead_IterStart);
@@ -168,26 +220,25 @@ protected:
             const SkPath* path = iter.get();
             SkScalar x = 0;
 
-            for (int et = 0; et < kGrProcessorEdgeTypeCnt; ++et) {
+            for (int et = 0; et < kGrClipEdgeTypeCnt; ++et) {
                 const SkMatrix m = SkMatrix::MakeTrans(x, y);
                 SkPath p;
                 path->transform(m, &p);
 
-                GrPrimitiveEdgeType edgeType = (GrPrimitiveEdgeType) et;
-                sk_sp<GrFragmentProcessor> fp(GrConvexPolyEffect::Make(edgeType, p));
+                GrClipEdgeType edgeType = (GrClipEdgeType) et;
+                std::unique_ptr<GrFragmentProcessor> fp(GrConvexPolyEffect::Make(edgeType, p));
                 if (!fp) {
                     continue;
                 }
 
                 GrPaint grPaint;
+                grPaint.setColor4f({ 0, 0, 0, 1.f });
                 grPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrc));
                 grPaint.addCoverageFragmentProcessor(std::move(fp));
 
-                std::unique_ptr<GrLegacyMeshDrawOp> op =
-                        PolyBoundsOp::Make(p.getBounds(), 0xff000000);
-
-                renderTargetContext->priv().testingOnly_addLegacyMeshDrawOp(
-                        std::move(grPaint), GrAAType::kNone, std::move(op));
+                std::unique_ptr<GrDrawOp> op =
+                        PolyBoundsOp::Make(context, std::move(grPaint), p.getBounds());
+                renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
 
                 x += SkScalarCeilToScalar(path->getBounds().width() + kDX);
             }
@@ -211,23 +262,23 @@ protected:
 
             SkScalar x = 0;
 
-            for (int et = 0; et < kGrProcessorEdgeTypeCnt; ++et) {
+            for (int et = 0; et < kGrClipEdgeTypeCnt; ++et) {
                 SkRect rect = *iter.get();
                 rect.offset(x, y);
-                GrPrimitiveEdgeType edgeType = (GrPrimitiveEdgeType) et;
-                sk_sp<GrFragmentProcessor> fp(GrConvexPolyEffect::Make(edgeType, rect));
+                GrClipEdgeType edgeType = (GrClipEdgeType) et;
+                std::unique_ptr<GrFragmentProcessor> fp(GrConvexPolyEffect::Make(edgeType, rect));
                 if (!fp) {
                     continue;
                 }
 
                 GrPaint grPaint;
+                grPaint.setColor4f({ 0, 0, 0, 1.f });
                 grPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrc));
                 grPaint.addCoverageFragmentProcessor(std::move(fp));
 
-                std::unique_ptr<GrLegacyMeshDrawOp> op = PolyBoundsOp::Make(rect, 0xff000000);
-
-                renderTargetContext->priv().testingOnly_addLegacyMeshDrawOp(
-                        std::move(grPaint), GrAAType::kNone, std::move(op));
+                std::unique_ptr<GrDrawOp> op = PolyBoundsOp::Make(context, std::move(grPaint),
+                                                                  rect);
+                renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
 
                 x += SkScalarCeilToScalar(rect.width() + kDX);
             }
@@ -257,5 +308,3 @@ private:
 
 DEF_GM(return new ConvexPolyEffect;)
 }
-
-#endif

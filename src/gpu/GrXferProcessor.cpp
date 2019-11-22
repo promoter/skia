@@ -5,30 +5,29 @@
  * found in the LICENSE file.
  */
 
-#include "GrXferProcessor.h"
-#include "GrPipeline.h"
-#include "gl/GrGLCaps.h"
+#include "src/gpu/GrXferProcessor.h"
 
-GrXferProcessor::GrXferProcessor() : fWillReadDstColor(false), fDstReadUsesMixedSamples(false) {}
+#include "src/gpu/GrCaps.h"
+#include "src/gpu/GrPipeline.h"
 
-GrXferProcessor::GrXferProcessor(bool willReadDstColor, bool hasMixedSamples)
-        : fWillReadDstColor(willReadDstColor)
-        , fDstReadUsesMixedSamples(willReadDstColor && hasMixedSamples) {}
+GrXferProcessor::GrXferProcessor(ClassID classID)
+        : INHERITED(classID)
+        , fWillReadDstColor(false)
+        , fDstReadUsesMixedSamples(false)
+        , fIsLCD(false) {}
+
+GrXferProcessor::GrXferProcessor(ClassID classID, bool willReadDstColor, bool hasMixedSamples,
+                                 GrProcessorAnalysisCoverage coverage)
+        : INHERITED(classID)
+        , fWillReadDstColor(willReadDstColor)
+        , fDstReadUsesMixedSamples(willReadDstColor && hasMixedSamples)
+        , fIsLCD(GrProcessorAnalysisCoverage::kLCD == coverage) {}
 
 bool GrXferProcessor::hasSecondaryOutput() const {
     if (!this->willReadDstColor()) {
         return this->onHasSecondaryOutput();
     }
     return this->dstReadUsesMixedSamples();
-}
-
-void GrXferProcessor::getBlendInfo(BlendInfo* blendInfo) const {
-    blendInfo->reset();
-    if (!this->willReadDstColor()) {
-        this->onGetBlendInfo(blendInfo);
-    } else if (this->dstReadUsesMixedSamples()) {
-        blendInfo->fDstBlend = kIS2A_GrBlendCoeff;
-    }
 }
 
 void GrXferProcessor::getGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b,
@@ -44,6 +43,9 @@ void GrXferProcessor::getGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorK
         if (this->dstReadUsesMixedSamples()) {
             key |= 0x8;
         }
+    }
+    if (fIsLCD) {
+        key |= 0x10;
     }
     b->add32(key);
     this->onGetGLSLProcessorKey(caps, b);
@@ -88,7 +90,10 @@ static const char* equation_string(GrBlendEquation eq) {
             return "hsl_color";
         case kHSLLuminosity_GrBlendEquation:
             return "hsl_luminosity";
-    };
+        case kIllegal_GrBlendEquation:
+            SkASSERT(false);
+            return "<illegal>";
+    }
     return "";
 }
 
@@ -130,6 +135,9 @@ static const char* coeff_string(GrBlendCoeff coeff) {
             return "src2_alpha";
         case kIS2A_GrBlendCoeff:
             return "inv_src2_alpha";
+        case kIllegal_GrBlendCoeff:
+            SkASSERT(false);
+            return "<illegal>";
     }
     return "";
 }
@@ -138,7 +146,7 @@ SkString GrXferProcessor::BlendInfo::dump() const {
     SkString out;
     out.printf("write_color(%d) equation(%s) src_coeff(%s) dst_coeff:(%s) const(0x%08x)",
                fWriteColor, equation_string(fEquation), coeff_string(fSrcBlend),
-               coeff_string(fDstBlend), fBlendConstant);
+               coeff_string(fDstBlend), fBlendConstant.toBytes_RGBA());
     return out;
 }
 #endif
@@ -149,20 +157,20 @@ GrXPFactory::AnalysisProperties GrXPFactory::GetAnalysisProperties(
         const GrXPFactory* factory,
         const GrProcessorAnalysisColor& color,
         const GrProcessorAnalysisCoverage& coverage,
-        const GrCaps& caps) {
+        const GrCaps& caps,
+        GrClampType clampType) {
     AnalysisProperties result;
     if (factory) {
-        result = factory->analysisProperties(color, coverage, caps);
+        result = factory->analysisProperties(color, coverage, caps, clampType);
     } else {
-        result = GrPorterDuffXPFactory::SrcOverAnalysisProperties(color, coverage, caps);
+        result = GrPorterDuffXPFactory::SrcOverAnalysisProperties(color, coverage, caps,
+                                                                  clampType);
     }
     SkASSERT(!(result & AnalysisProperties::kRequiresDstTexture));
     if ((result & AnalysisProperties::kReadsDstInShader) &&
         !caps.shaderCaps()->dstReadInShaderSupport()) {
-        result |= AnalysisProperties::kRequiresDstTexture;
-        if (caps.textureBarrierSupport()) {
-            result |= AnalysisProperties::kRequiresBarrierBetweenOverlappingDraws;
-        }
+        result |= AnalysisProperties::kRequiresDstTexture |
+                  AnalysisProperties::kRequiresNonOverlappingDraws;
     }
     return result;
 }
@@ -171,10 +179,11 @@ sk_sp<const GrXferProcessor> GrXPFactory::MakeXferProcessor(const GrXPFactory* f
                                                             const GrProcessorAnalysisColor& color,
                                                             GrProcessorAnalysisCoverage coverage,
                                                             bool hasMixedSamples,
-                                                            const GrCaps& caps) {
+                                                            const GrCaps& caps,
+                                                            GrClampType clampType) {
     SkASSERT(!hasMixedSamples || caps.shaderCaps()->dualSourceBlendingSupport());
     if (factory) {
-        return factory->makeXferProcessor(color, coverage, hasMixedSamples, caps);
+        return factory->makeXferProcessor(color, coverage, hasMixedSamples, caps, clampType);
     } else {
         return GrPorterDuffXPFactory::MakeSrcOverXferProcessor(color, coverage, hasMixedSamples,
                                                                caps);

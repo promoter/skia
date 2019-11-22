@@ -5,20 +5,22 @@
  * found in the LICENSE file.
  */
 
-#include "SkBigPicture.h"
-#include "SkData.h"
-#include "SkDrawable.h"
-#include "SkPictureRecorder.h"
-#include "SkRecord.h"
-#include "SkRecordDraw.h"
-#include "SkRecordOpts.h"
-#include "SkRecordedDrawable.h"
-#include "SkRecorder.h"
-#include "SkTypes.h"
+#include "include/core/SkData.h"
+#include "include/core/SkDrawable.h"
+#include "include/core/SkPictureRecorder.h"
+#include "include/core/SkTypes.h"
+#include "src/core/SkBigPicture.h"
+#include "src/core/SkMiniRecorder.h"
+#include "src/core/SkRecord.h"
+#include "src/core/SkRecordDraw.h"
+#include "src/core/SkRecordOpts.h"
+#include "src/core/SkRecordedDrawable.h"
+#include "src/core/SkRecorder.h"
 
 SkPictureRecorder::SkPictureRecorder() {
     fActivelyRecording = false;
-    fRecorder.reset(new SkRecorder(nullptr, SkRect::MakeEmpty(), &fMiniRecorder));
+    fMiniRecorder.reset(new SkMiniRecorder);
+    fRecorder.reset(new SkRecorder(nullptr, SkRect::MakeEmpty(), fMiniRecorder.get()));
 }
 
 SkPictureRecorder::~SkPictureRecorder() {}
@@ -32,7 +34,7 @@ SkCanvas* SkPictureRecorder::beginRecording(const SkRect& userCullRect,
     fFlags = recordFlags;
 
     if (bbhFactory) {
-        fBBH.reset((*bbhFactory)(cullRect));
+        fBBH.reset((*bbhFactory)());
         SkASSERT(fBBH.get());
     }
 
@@ -42,7 +44,7 @@ SkCanvas* SkPictureRecorder::beginRecording(const SkRect& userCullRect,
     SkRecorder::DrawPictureMode dpm = (recordFlags & kPlaybackDrawPicture_RecordFlag)
         ? SkRecorder::Playback_DrawPictureMode
         : SkRecorder::Record_DrawPictureMode;
-    fRecorder->reset(fRecord.get(), cullRect, dpm, &fMiniRecorder);
+    fRecorder->reset(fRecord.get(), cullRect, dpm, fMiniRecorder.get());
     fActivelyRecording = true;
     return this->getRecordingCanvas();
 }
@@ -56,7 +58,9 @@ sk_sp<SkPicture> SkPictureRecorder::finishRecordingAsPicture(uint32_t finishFlag
     fRecorder->restoreToCount(1);  // If we were missing any restores, add them now.
 
     if (fRecord->count() == 0) {
-        return fMiniRecorder.detachAsPicture(fCullRect);
+        auto pic = fMiniRecorder->detachAsPicture(fBBH ? nullptr : &fCullRect);
+        fBBH.reset(nullptr);
+        return pic;
     }
 
     // TODO: delay as much of this work until just before first playback?

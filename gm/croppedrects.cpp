@@ -5,11 +5,20 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "SkPath.h"
-#include "SkRandom.h"
-#include "SkRRect.h"
-#include "SkSurface.h"
+#include "gm/gm.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkFilterQuality.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkShader.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkSurface.h"
 
 namespace skiagm {
 
@@ -47,8 +56,7 @@ private:
         srcCanvas->drawRect(kSrcImageClip.makeInset(kStrokeWidth / 2, kStrokeWidth / 2), stroke);
 
         fSrcImage = srcSurface->makeImageSnapshot();
-        fSrcImageShader = fSrcImage->makeShader(SkShader::kClamp_TileMode,
-                                                SkShader::kClamp_TileMode);
+        fSrcImageShader = fSrcImage->makeShader();
     }
 
     void onDraw(SkCanvas* canvas) override {
@@ -89,8 +97,9 @@ private:
             paint.setStrokeWidth(2 * kSrcImageClip.height());
             paint.setShader(fSrcImageShader);
             paint.setFilterQuality(kNone_SkFilterQuality);
-            canvas->translate(-90, 263);
+            canvas->translate(23, 301);
             canvas->scale(300 / kSrcImageClip.width(), 100 / kSrcImageClip.height());
+            canvas->translate(-kSrcImageClip.left(), -kSrcImageClip.top());
             canvas->clipRect(kSrcImageClip);
             canvas->drawPath(path, paint);
         }

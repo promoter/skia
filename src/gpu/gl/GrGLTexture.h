@@ -9,77 +9,81 @@
 #ifndef GrGLTexture_DEFINED
 #define GrGLTexture_DEFINED
 
-#include "GrGpu.h"
-#include "GrTexture.h"
-#include "GrGLUtil.h"
+#include "include/gpu/GrTexture.h"
+#include "include/private/GrGLTypesPriv.h"
+#include "src/gpu/GrGpu.h"
+#include "src/gpu/gl/GrGLUtil.h"
 
 class GrGLGpu;
 
 class GrGLTexture : public GrTexture {
 public:
-    struct TexParams {
-        GrGLenum fMinFilter;
-        GrGLenum fMagFilter;
-        GrGLenum fWrapS;
-        GrGLenum fWrapT;
-        GrGLenum fMaxMipMapLevel;
-        GrGLenum fSwizzleRGBA[4];
-        GrGLenum fSRGBDecode;
-        void invalidate() { memset(this, 0xff, sizeof(TexParams)); }
+    struct Desc {
+        SkISize fSize                       = {-1, -1};
+        GrGLenum fTarget                    = 0;
+        GrGLuint fID                        = 0;
+        GrGLFormat fFormat                  = GrGLFormat::kUnknown;
+        GrPixelConfig fConfig               = kUnknown_GrPixelConfig;
+        GrBackendObjectOwnership fOwnership = GrBackendObjectOwnership::kOwned;
     };
 
-    struct IDDesc {
-        GrGLTextureInfo             fInfo;
-        GrBackendObjectOwnership    fOwnership;
-    };
-    GrGLTexture(GrGLGpu*, SkBudgeted, const GrSurfaceDesc&, const IDDesc&);
-    GrGLTexture(GrGLGpu*, SkBudgeted, const GrSurfaceDesc&, const IDDesc&,
-                bool wasMipMapDataProvided);
+    static GrTextureType TextureTypeFromTarget(GrGLenum textureTarget);
 
-    GrBackendObject getTextureHandle() const override;
+    GrGLTexture(GrGLGpu*, SkBudgeted, const Desc&, GrMipMapsStatus);
 
-    void textureParamsModified() override { fTexParams.invalidate(); }
+    ~GrGLTexture() override {}
 
-    // These functions are used to track the texture parameters associated with the texture.
-    const TexParams& getCachedTexParams(GrGpu::ResetTimestamp* timestamp) const {
-        *timestamp = fTexParamsTimestamp;
-        return fTexParams;
-    }
+    GrBackendTexture getBackendTexture() const override;
 
-    void setCachedTexParams(const TexParams& texParams,
-                            GrGpu::ResetTimestamp timestamp) {
-        fTexParams = texParams;
-        fTexParamsTimestamp = timestamp;
-    }
+    GrBackendFormat backendFormat() const override;
 
-    GrGLuint textureID() const { return fInfo.fID; }
+    // TODO: Remove once clients are no longer calling this.
+    void textureParamsModified() override { fParameters->invalidate(); }
 
-    GrGLenum target() const { return fInfo.fTarget; }
+    GrGLTextureParameters* parameters() { return fParameters.get(); }
 
-    static sk_sp<GrGLTexture> MakeWrapped(GrGLGpu*, const GrSurfaceDesc&, const IDDesc&);
+    GrGLuint textureID() const { return fID; }
+
+    GrGLenum target() const;
+
+    GrGLFormat format() const { return fFormat; }
+
+    bool hasBaseLevelBeenBoundToFBO() const { return fBaseLevelHasBeenBoundToFBO; }
+    void baseLevelWasBoundToFBO() { fBaseLevelHasBeenBoundToFBO = true; }
+
+    static sk_sp<GrGLTexture> MakeWrapped(GrGLGpu*,
+                                          GrMipMapsStatus,
+                                          const Desc&,
+                                          sk_sp<GrGLTextureParameters>,
+                                          GrWrapCacheable, GrIOType);
+
+    void dumpMemoryStatistics(SkTraceMemoryDump* traceMemoryDump) const override;
+
 protected:
     // Constructor for subclasses.
-    GrGLTexture(GrGLGpu*, const GrSurfaceDesc&, const IDDesc&, bool wasMipMapDataProvided);
+    GrGLTexture(GrGLGpu*, const Desc&, sk_sp<GrGLTextureParameters>, GrMipMapsStatus);
 
-    enum Wrapped { kWrapped };
     // Constructor for instances wrapping backend objects.
-    GrGLTexture(GrGLGpu*, Wrapped, const GrSurfaceDesc&, const IDDesc&);
+    GrGLTexture(GrGLGpu*,
+                const Desc&,
+                GrMipMapsStatus,
+                sk_sp<GrGLTextureParameters>,
+                GrWrapCacheable,
+                GrIOType);
 
-    void init(const GrSurfaceDesc&, const IDDesc&);
+    void init(const Desc&);
 
     void onAbandon() override;
     void onRelease() override;
-    void setMemoryBacking(SkTraceMemoryDump* traceMemoryDump,
-                          const SkString& dumpName) const override;
-    std::unique_ptr<GrExternalTextureData> detachBackendTexture() override;
+
+    bool onStealBackendTexture(GrBackendTexture*, SkImage::BackendTextureReleaseProc*) override;
 
 private:
-    TexParams                       fTexParams;
-    GrGpu::ResetTimestamp           fTexParamsTimestamp;
-    // Holds the texture target and ID. A pointer to this may be shared to external clients for
-    // direct interaction with the GL object.
-    GrGLTextureInfo                 fInfo;
-    GrBackendObjectOwnership        fTextureIDOwnership;
+    sk_sp<GrGLTextureParameters> fParameters;
+    GrGLuint fID;
+    GrGLFormat fFormat;
+    GrBackendObjectOwnership fTextureIDOwnership;
+    bool fBaseLevelHasBeenBoundToFBO = false;
 
     typedef GrTexture INHERITED;
 };

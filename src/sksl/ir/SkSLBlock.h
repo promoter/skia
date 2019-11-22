@@ -8,8 +8,8 @@
 #ifndef SKSL_BLOCK
 #define SKSL_BLOCK
 
-#include "SkSLStatement.h"
-#include "SkSLSymbolTable.h"
+#include "src/sksl/ir/SkSLStatement.h"
+#include "src/sksl/ir/SkSLSymbolTable.h"
 
 namespace SkSL {
 
@@ -17,11 +17,28 @@ namespace SkSL {
  * A block of multiple statements functioning as a single statement.
  */
 struct Block : public Statement {
-    Block(Position position, std::vector<std::unique_ptr<Statement>> statements,
-          const std::shared_ptr<SymbolTable> symbols)
-    : INHERITED(position, kBlock_Kind)
+    Block(int offset, std::vector<std::unique_ptr<Statement>> statements,
+          const std::shared_ptr<SymbolTable> symbols = nullptr)
+    : INHERITED(offset, kBlock_Kind)
     , fSymbols(std::move(symbols))
     , fStatements(std::move(statements)) {}
+
+    bool isEmpty() const override {
+        for (const auto& s : fStatements) {
+            if (!s->isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::unique_ptr<Statement> clone() const override {
+        std::vector<std::unique_ptr<Statement>> cloned;
+        for (const auto& s : fStatements) {
+            cloned.push_back(s->clone());
+        }
+        return std::unique_ptr<Statement>(new Block(fOffset, std::move(cloned), fSymbols));
+    }
 
     String description() const override {
         String result("{");
@@ -36,7 +53,7 @@ struct Block : public Statement {
     // it's important to keep fStatements defined after (and thus destroyed before) fSymbols,
     // because destroying statements can modify reference counts in symbols
     const std::shared_ptr<SymbolTable> fSymbols;
-    const std::vector<std::unique_ptr<Statement>> fStatements;
+    std::vector<std::unique_ptr<Statement>> fStatements;
 
     typedef Statement INHERITED;
 };

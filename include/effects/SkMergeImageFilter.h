@@ -8,42 +8,27 @@
 #ifndef SkMergeImageFilter_DEFINED
 #define SkMergeImageFilter_DEFINED
 
-#include "SkBlendMode.h"
-#include "SkImageFilter.h"
+#include "include/core/SkImageFilter.h"
 
-class SK_API SkMergeImageFilter : public SkImageFilter {
+// DEPRECATED: Use include/effects/SkImageFilters::Merge
+class SK_API SkMergeImageFilter {
 public:
-    ~SkMergeImageFilter() override;
+    static sk_sp<SkImageFilter> Make(sk_sp<SkImageFilter>* const filters, int count,
+                                     const SkImageFilter::CropRect* cropRect = nullptr);
 
     static sk_sp<SkImageFilter> Make(sk_sp<SkImageFilter> first, sk_sp<SkImageFilter> second,
-                                     SkBlendMode, const CropRect* cropRect = nullptr);
-    static sk_sp<SkImageFilter> MakeN(sk_sp<SkImageFilter>[], int count, const SkBlendMode[],
-                                     const CropRect* cropRect = nullptr);
+                                     const SkImageFilter::CropRect* cropRect = nullptr) {
+        sk_sp<SkImageFilter> array[] = {
+            std::move(first),
+            std::move(second),
+        };
+        return Make(array, 2, cropRect);
+    }
 
-    SK_TO_STRING_OVERRIDE()
-    SK_DECLARE_PUBLIC_FLATTENABLE_DESERIALIZATION_PROCS(SkMergeImageFilter)
-
-protected:
-    void flatten(SkWriteBuffer&) const override;
-    sk_sp<SkSpecialImage> onFilterImage(SkSpecialImage* source, const Context&,
-                                        SkIPoint* offset) const override;
-    sk_sp<SkImageFilter> onMakeColorSpace(SkColorSpaceXformer*) const override;
-    bool onCanHandleComplexCTM() const override { return true; }
+    static void RegisterFlattenables();
 
 private:
-    SkMergeImageFilter(sk_sp<SkImageFilter> filters[], int count, const SkBlendMode modes[],
-                       const CropRect* cropRect);
-
-    uint8_t*    fModes; // SkBlendMode
-
-    // private storage, to avoid dynamically allocating storage for our copy
-    // of the modes (unless the count is so large we can't fit).
-    intptr_t    fStorage[16];
-
-    void initAllocModes();
-    void initModes(const SkBlendMode[]);
-
-    typedef SkImageFilter INHERITED;
+    SkMergeImageFilter() = delete;
 };
 
 #endif

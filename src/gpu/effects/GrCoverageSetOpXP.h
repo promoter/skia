@@ -8,14 +8,18 @@
 #ifndef GrCoverageSetOpXP_DEFINED
 #define GrCoverageSetOpXP_DEFINED
 
-#include "GrTypes.h"
-#include "GrXferProcessor.h"
-#include "SkRegion.h"
+#include "include/core/SkRegion.h"
+#include "include/gpu/GrTypes.h"
+#include "src/gpu/GrXferProcessor.h"
 
 // See the comment above GrXPFactory's definition about this warning suppression.
-#if defined(__GNUC__) || defined(__clang)
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#endif
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnon-virtual-dtor"
 #endif
 
 /**
@@ -33,24 +37,29 @@ private:
     sk_sp<const GrXferProcessor> makeXferProcessor(const GrProcessorAnalysisColor&,
                                                    GrProcessorAnalysisCoverage,
                                                    bool hasMixedSamples,
-                                                   const GrCaps&) const override;
+                                                   const GrCaps&,
+                                                   GrClampType) const override;
 
     AnalysisProperties analysisProperties(const GrProcessorAnalysisColor&,
                                           const GrProcessorAnalysisCoverage&,
-                                          const GrCaps&) const override {
+                                          const GrCaps&,
+                                          GrClampType) const override {
         return AnalysisProperties::kIgnoresInputColor;
     }
 
 
-    GR_DECLARE_XP_FACTORY_TEST;
+    GR_DECLARE_XP_FACTORY_TEST
 
     SkRegion::Op fRegionOp;
     bool         fInvertCoverage;
 
     typedef GrXPFactory INHERITED;
 };
-#if defined(__GNUC__) || defined(__clang)
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+#if defined(__clang__)
+#pragma clang diagnostic pop
 #endif
 
+#endif

@@ -5,9 +5,16 @@
  * found in the LICENSE file.
  */
 
-#include "SkCachedData.h"
-#include "SkDiscardableMemoryPool.h"
-#include "Test.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkMalloc.h"
+#include "src/core/SkCachedData.h"
+#include "src/lazy/SkDiscardableMemoryPool.h"
+#include "tests/Test.h"
+
+#include <cstring>
+
+class SkDiscardableMemory;
 
 enum LockedState {
     kUnlocked,
@@ -72,7 +79,7 @@ static SkCachedData* test_locking(skiatest::Reporter* reporter,
  *  and when the cache is.
  */
 DEF_TEST(CachedData, reporter) {
-    sk_sp<SkDiscardableMemoryPool> pool(SkDiscardableMemoryPool::Create(1000));
+    sk_sp<SkDiscardableMemoryPool> pool(SkDiscardableMemoryPool::Make(1000));
 
     for (int useDiscardable = 0; useDiscardable <= 1; ++useDiscardable) {
         const size_t size = 100;

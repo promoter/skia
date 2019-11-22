@@ -4,13 +4,13 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-#include "PathOpsCubicIntersectionTestData.h"
-#include "PathOpsTestCommon.h"
-#include "SkGeometry.h"
-#include "SkIntersections.h"
-#include "SkPathOpsRect.h"
-#include "SkReduceOrder.h"
-#include "Test.h"
+#include "src/core/SkGeometry.h"
+#include "src/pathops/SkIntersections.h"
+#include "src/pathops/SkPathOpsRect.h"
+#include "src/pathops/SkReduceOrder.h"
+#include "tests/PathOpsCubicIntersectionTestData.h"
+#include "tests/PathOpsTestCommon.h"
+#include "tests/Test.h"
 
 #include <stdlib.h>
 
@@ -168,9 +168,10 @@ static const CubicPts testSet[] = {
 const int testSetCount = (int) SK_ARRAY_COUNT(testSet);
 
 static const CubicPts newTestSet[] = {
+
 { { { 130.0427549999999997, 11417.41309999999976 },{ 130.2331240000000037, 11418.3192999999992 },{ 131.0370790000000056, 11419 },{ 132, 11419 } } },
 { { { 132, 11419 },{ 130.8954319999999996, 11419 },{ 130, 11418.10449999999946 },{ 130, 11417 } } },
-    
+
 {{{1,3}, {-1.0564518,1.79032254}, {1.45265341,0.229448318}, {1.45381773,0.22913377}}},
 {{{1.45381773,0.22913377}, {1.45425761,0.229014933}, {1.0967741,0.451612949}, {0,1}}},
 
@@ -646,11 +647,10 @@ static void selfOneOff(skiatest::Reporter* reporter, int index) {
         c[i] = cubic.fPts[i].asSkPoint();
     }
     SkScalar loopT[3];
-    SkScalar d[3];
-    SkCubicType cubicType = SkClassifyCubic(c, d);
+    SkCubicType cubicType = SkClassifyCubic(c);
     int breaks = SkDCubic::ComplexBreak(c, loopT);
     SkASSERT(breaks < 2);
-    if (breaks && cubicType == SkCubicType::kLoop_SkCubicType) {
+    if (breaks && cubicType == SkCubicType::kLoop) {
         SkIntersections i;
         SkPoint twoCubics[7];
         SkChopCubicAt(c, twoCubics, loopT[0]);

@@ -8,10 +8,10 @@
 #ifndef SkRawCodec_DEFINED
 #define SkRawCodec_DEFINED
 
-#include "SkCodec.h"
-#include "SkColorSpace.h"
-#include "SkImageInfo.h"
-#include "SkTypes.h"
+#include "include/codec/SkCodec.h"
+#include "include/core/SkColorSpace.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkTypes.h"
 
 class SkDngImage;
 class SkStream;
@@ -28,14 +28,14 @@ public:
      * Creates a RAW decoder
      * Takes ownership of the stream
      */
-    static SkCodec* NewFromStream(SkStream*);
+    static std::unique_ptr<SkCodec> MakeFromStream(std::unique_ptr<SkStream>, Result*);
 
     ~SkRawCodec() override;
 
 protected:
 
     Result onGetPixels(const SkImageInfo& dstInfo, void* dst, size_t dstRowBytes, const Options&,
-            SkPMColor*, int*, int*) override;
+            int*) override;
 
     SkEncodedImageFormat onGetEncodedFormat() const override {
         return SkEncodedImageFormat::kDNG;
@@ -44,6 +44,10 @@ protected:
     SkISize onGetScaledDimensions(float desiredScale) const override;
 
     bool onDimensionsSupported(const SkISize&) override;
+
+    // SkCodec only applies the colorXform if it's necessary for color space
+    // conversion. SkRawCodec will always convert, so tell SkCodec not to.
+    bool usesColorXform() const override { return false; }
 
 private:
 

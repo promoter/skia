@@ -8,8 +8,8 @@
 #ifndef SkDiscardableMemoryPool_DEFINED
 #define SkDiscardableMemoryPool_DEFINED
 
-#include "SkDiscardableMemory.h"
-#include "SkMutex.h"
+#include "include/private/SkMutex.h"
+#include "src/core/SkDiscardableMemory.h"
 
 #ifndef SK_LAZY_CACHE_STATS
     #ifdef SK_DEBUG
@@ -50,10 +50,8 @@ public:
     /**
      *  This non-global pool can be used for unit tests to verify that
      *  the pool works.
-     *  Without mutex, will be not be thread safe.
      */
-    static SkDiscardableMemoryPool* Create(
-            size_t size, SkBaseMutex* mutex = nullptr);
+    static sk_sp<SkDiscardableMemoryPool> Make(size_t size);
 };
 
 /**

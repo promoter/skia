@@ -8,25 +8,32 @@
 #ifndef GrDrawOpTest_DEFINED
 #define GrDrawOpTest_DEFINED
 
-#include "GrTestUtils.h"
-#include "SkRefCnt.h"
+#include "include/core/SkRefCnt.h"
+#include "src/gpu/GrTestUtils.h"
 
 #if GR_TEST_UTILS
 
-class GrContext;
-class GrLegacyMeshDrawOp;
+class GrContext_Base;
+class GrDrawOp;
+class GrPaint;
+class GrRecordingContext;
+class GrRenderTargetContext;
+struct GrUserStencilSettings;
 class SkRandom;
 
-/**  This function returns a randomly configured GrDrawOp for testing purposes. */
-std::unique_ptr<GrLegacyMeshDrawOp> GrRandomDrawOp(SkRandom*, GrContext*);
+/**  This function draws a randomly configured GrDrawOp for testing purposes. */
+void GrDrawRandomOp(SkRandom*, GrRenderTargetContext*, GrPaint&&);
 
 /** GrDrawOp subclasses should define test factory functions using this macro. */
-#define DRAW_OP_TEST_DEFINE(Op) \
-    std::unique_ptr<GrLegacyMeshDrawOp> Op##__Test(SkRandom* random, GrContext* context)
+#define GR_DRAW_OP_TEST_DEFINE(Op)                                                              \
+    std::unique_ptr<GrDrawOp> Op##__Test(GrPaint&& paint, SkRandom* random,                     \
+                                         GrRecordingContext* context, int numSamples)
+#define GR_DRAW_OP_TEST_FRIEND(Op)                                                              \
+    friend std::unique_ptr<GrDrawOp> Op##__Test(GrPaint&& paint, SkRandom* random,              \
+                                                GrRecordingContext* context, int numSamples)
 
-/** This macro may be used if the test factory function must be made a friend of a class. */
-#define DRAW_OP_TEST_FRIEND(Op) \
-    friend std::unique_ptr<GrLegacyMeshDrawOp> Op##__Test(SkRandom* random, GrContext* context);
+/** Helper for op test factories to pick a random stencil state. */
+const GrUserStencilSettings* GrGetRandomStencil(SkRandom* random, GrContext_Base*);
 
 #endif
 #endif

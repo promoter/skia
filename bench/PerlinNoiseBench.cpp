@@ -4,9 +4,10 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-#include "Benchmark.h"
-#include "SkCanvas.h"
-#include "SkPerlinNoiseShader.h"
+#include "bench/Benchmark.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkShader.h"
+#include "include/effects/SkPerlinNoiseShader.h"
 
 class PerlinNoiseBench : public Benchmark {
     SkISize fSize;
@@ -22,8 +23,7 @@ protected:
     }
 
     void onDraw(int loops, SkCanvas* canvas) override {
-        this->test(loops, canvas, 0, 0, SkPerlinNoiseShader::kFractalNoise_Type,
-                   0.1f, 0.1f, 3, 0, false);
+        this->test(loops, canvas, 0, 0, 0.1f, 0.1f, 3, 0, false);
     }
 
 private:
@@ -38,17 +38,13 @@ private:
         canvas->restore();
     }
 
-    void test(int loops, SkCanvas* canvas, int x, int y, SkPerlinNoiseShader::Type type,
+    void test(int loops, SkCanvas* canvas, int x, int y,
               float baseFrequencyX, float baseFrequencyY, int numOctaves, float seed,
               bool stitchTiles) {
-        sk_sp<SkShader> shader = (type == SkPerlinNoiseShader::kFractalNoise_Type) ?
-            SkPerlinNoiseShader::MakeFractalNoise(baseFrequencyX, baseFrequencyY, numOctaves,
-                                                  seed, stitchTiles ? &fSize : nullptr) :
-            SkPerlinNoiseShader::MakeTurbulence(baseFrequencyX, baseFrequencyY, numOctaves,
-                                                seed, stitchTiles ? &fSize : nullptr);
         SkPaint paint;
-        paint.setShader(shader);
-
+        paint.setShader(SkPerlinNoiseShader::MakeFractalNoise(baseFrequencyX, baseFrequencyY,
+                                                              numOctaves, seed,
+                                                              stitchTiles ? &fSize : nullptr));
         for (int i = 0; i < loops; i++) {
             this->drawClippedRect(canvas, x, y, paint);
         }

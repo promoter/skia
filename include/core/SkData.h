@@ -10,7 +10,7 @@
 
 #include <stdio.h>
 
-#include "SkRefCnt.h"
+#include "include/core/SkRefCnt.h"
 
 class SkStream;
 
@@ -169,10 +169,7 @@ private:
     ~SkData();
 
     // Ensure the unsized delete is called.
-    void operator delete(void* p) { ::operator delete(p); }
-
-    // Called the first time someone calls NewEmpty to initialize the singleton.
-    friend SkData* sk_new_empty_data();
+    void operator delete(void* p);
 
     // shared internal factory
     static sk_sp<SkData> PrivateNewWithCopy(const void* srcOrNull, size_t length);

@@ -4,9 +4,11 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-#include "SkAddIntersections.h"
-#include "SkOpCoincidence.h"
-#include "SkPathOpsBounds.h"
+#include "src/pathops/SkAddIntersections.h"
+#include "src/pathops/SkOpCoincidence.h"
+#include "src/pathops/SkPathOpsBounds.h"
+
+#include <utility>
 
 #if DEBUG_ADD_INTERSECTING_TS
 
@@ -509,11 +511,19 @@ bool AddIntersectTs(SkOpContour* test, SkOpContour* next, SkOpCoincidence* coinc
                 SkASSERT(ts[0][pt] >= 0 && ts[0][pt] <= 1);
                 SkASSERT(ts[1][pt] >= 0 && ts[1][pt] <= 1);
                 wt.segment()->debugValidate();
-                SkOpPtT* testTAt = wt.segment()->addT(ts[swap][pt]);
+                // if t value is used to compute pt in addT, error may creep in and
+                // rect intersections may result in non-rects. if pt value from intersection
+                // is passed in, current tests break. As a workaround, pass in pt
+                // value from intersection only if pt.x and pt.y is integral
+                SkPoint iPt = ts.pt(pt).asSkPoint();
+                bool iPtIsIntegral = iPt.fX == floor(iPt.fX) && iPt.fY == floor(iPt.fY);
+                SkOpPtT* testTAt = iPtIsIntegral ? wt.segment()->addT(ts[swap][pt], iPt)
+                        : wt.segment()->addT(ts[swap][pt]);
                 wn.segment()->debugValidate();
-                SkOpPtT* nextTAt = wn.segment()->addT(ts[!swap][pt]);
+                SkOpPtT* nextTAt = iPtIsIntegral ? wn.segment()->addT(ts[!swap][pt], iPt)
+                        : wn.segment()->addT(ts[!swap][pt]);
                 if (!testTAt->contains(nextTAt)) {
-                    SkOpPtT* oppPrev = testTAt->oppPrev(nextTAt);  //  Returns nullptr if pair 
+                    SkOpPtT* oppPrev = testTAt->oppPrev(nextTAt);  //  Returns nullptr if pair
                     if (oppPrev) {                                 //  already share a pt-t loop.
                         testTAt->span()->mergeMatches(nextTAt->span());
                         testTAt->addOpp(nextTAt, oppPrev);
@@ -543,8 +553,9 @@ bool AddIntersectTs(SkOpContour* test, SkOpContour* next, SkOpCoincidence* coinc
                     continue;
                 }
                 if (swap) {
-                    SkTSwap(coinPtT[0], coinPtT[1]);
-                    SkTSwap(testTAt, nextTAt);
+                    using std::swap;
+                    swap(coinPtT[0], coinPtT[1]);
+                    swap(testTAt, nextTAt);
                 }
                 SkASSERT(coincidence->globalState()->debugSkipAssert()
                         || coinPtT[0]->span()->t() < testTAt->span()->t());

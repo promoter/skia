@@ -8,12 +8,11 @@
 #ifndef SKSL_VARIABLEREFERENCE
 #define SKSL_VARIABLEREFERENCE
 
-#include "SkSLExpression.h"
-#include "SkSLFloatLiteral.h"
-#include "SkSLIRGenerator.h"
-#include "SkSLIntLiteral.h"
+#include "src/sksl/ir/SkSLExpression.h"
 
 namespace SkSL {
+
+class IRGenerator;
 
 /**
  * A reference to a variable, through which it can be read or written. In the statement:
@@ -26,80 +25,48 @@ struct VariableReference : public Expression {
     enum RefKind {
         kRead_RefKind,
         kWrite_RefKind,
-        kReadWrite_RefKind
+        kReadWrite_RefKind,
+        // taking the address of a variable - we consider this a read & write but don't complain if
+        // the variable was not previously assigned
+        kPointer_RefKind
     };
 
-    VariableReference(Position position, const Variable& variable, RefKind refKind = kRead_RefKind)
-    : INHERITED(position, kVariableReference_Kind, variable.fType)
-    , fVariable(variable)
-    , fRefKind(refKind) {
-        if (refKind != kRead_RefKind) {
-            fVariable.fWriteCount++;
-        }
-        if (refKind != kWrite_RefKind) {
-            fVariable.fReadCount++;
-        }
-    }
+    VariableReference(int offset, const Variable& variable, RefKind refKind = kRead_RefKind);
 
-    virtual ~VariableReference() override {
-        if (fRefKind != kWrite_RefKind) {
-            fVariable.fReadCount--;
-        }
-    }
+    ~VariableReference() override;
 
-    RefKind refKind() {
+    RefKind refKind() const {
         return fRefKind;
     }
 
-    void setRefKind(RefKind refKind) {
-        if (fRefKind != kRead_RefKind) {
-            fVariable.fWriteCount--;
-        }
-        if (fRefKind != kWrite_RefKind) {
-            fVariable.fReadCount--;
-        }
-        if (refKind != kRead_RefKind) {
-            fVariable.fWriteCount++;
-        }
-        if (refKind != kWrite_RefKind) {
-            fVariable.fReadCount++;
-        }
-        fRefKind = refKind;
+    void setRefKind(RefKind refKind);
+
+    bool hasSideEffects() const override {
+        return false;
+    }
+
+    bool isConstant() const override {
+        return 0 != (fVariable.fModifiers.fFlags & Modifiers::kConst_Flag);
+    }
+
+    std::unique_ptr<Expression> clone() const override {
+        return std::unique_ptr<Expression>(new VariableReference(fOffset, fVariable, fRefKind));
     }
 
     String description() const override {
         return fVariable.fName;
     }
 
-    virtual std::unique_ptr<Expression> constantPropagate(
-                                                        const IRGenerator& irGenerator,
-                                                        const DefinitionMap& definitions) override {
-        auto exprIter = definitions.find(&fVariable);
-        if (exprIter != definitions.end() && exprIter->second) {
-            const Expression* expr = exprIter->second->get();
-            switch (expr->fKind) {
-                case Expression::kIntLiteral_Kind:
-                    return std::unique_ptr<Expression>(new IntLiteral(
-                                                                     irGenerator.fContext,
-                                                                     Position(),
-                                                                     ((IntLiteral*) expr)->fValue));
-                case Expression::kFloatLiteral_Kind:
-                    return std::unique_ptr<Expression>(new FloatLiteral(
-                                                                   irGenerator.fContext,
-                                                                   Position(),
-                                                                   ((FloatLiteral*) expr)->fValue));
-                default:
-                    break;
-            }
-        }
-        return nullptr;
-    }
+    static std::unique_ptr<Expression> copy_constant(const IRGenerator& irGenerator,
+                                                     const Expression* expr);
+
+    std::unique_ptr<Expression> constantPropagate(const IRGenerator& irGenerator,
+                                                  const DefinitionMap& definitions) override;
 
     const Variable& fVariable;
-
-private:
     RefKind fRefKind;
 
+private:
     typedef Expression INHERITED;
 };
 

@@ -8,23 +8,22 @@
 #ifndef GrDefaultPathRenderer_DEFINED
 #define GrDefaultPathRenderer_DEFINED
 
-#include "GrPathRenderer.h"
-#include "GrPathStencilSettings.h"
-#include "SkTypes.h"
+#include "include/core/SkTypes.h"
+#include "src/gpu/GrPathRenderer.h"
+#include "src/gpu/ops/GrPathStencilSettings.h"
 
 /**
  *  Subclass that renders the path using the stencil buffer to resolve fill rules
  * (e.g. winding, even-odd)
  */
-class SK_API GrDefaultPathRenderer : public GrPathRenderer {
+class GrDefaultPathRenderer : public GrPathRenderer {
 public:
-    GrDefaultPathRenderer(bool separateStencilSupport, bool stencilWrapOpsSupport);
+    GrDefaultPathRenderer();
 
 private:
-
     StencilSupport onGetStencilSupport(const GrShape&) const override;
 
-    bool onCanDrawPath(const CanDrawPathArgs&) const override;
+    CanDrawPath onCanDrawPath(const CanDrawPathArgs&) const override;
 
     bool onDrawPath(const DrawPathArgs&) override;
 
@@ -38,9 +37,6 @@ private:
                           const SkMatrix& viewMatrix,
                           const GrShape&,
                           bool stencilOnly);
-
-    bool    fSeparateStencil;
-    bool    fStencilWrapOps;
 
     typedef GrPathRenderer INHERITED;
 };

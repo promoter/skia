@@ -5,205 +5,36 @@
  * found in the LICENSE file.
  */
 
-#include "GrTest.h"
+#include "include/core/SkString.h"
+#include "include/gpu/GrBackendSurface.h"
+#include "include/gpu/GrContextOptions.h"
+#include "include/gpu/GrTexture.h"
+#include "include/private/GrRecordingContext.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkMathPriv.h"
+#include "src/gpu/GrClip.h"
+#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDrawOpAtlas.h"
+#include "src/gpu/GrDrawingManager.h"
+#include "src/gpu/GrGpu.h"
+#include "src/gpu/GrGpuResourceCacheAccess.h"
+#include "src/gpu/GrMemoryPool.h"
+#include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrRenderTargetContextPriv.h"
+#include "src/gpu/GrRenderTargetProxy.h"
+#include "src/gpu/GrResourceCache.h"
+#include "src/gpu/GrSemaphore.h"
+#include "src/gpu/GrSurfaceContextPriv.h"
+#include "src/gpu/SkGr.h"
+#include "src/gpu/ccpr/GrCCPathCache.h"
+#include "src/gpu/ccpr/GrCoverageCountingPathRenderer.h"
+#include "src/gpu/ops/GrMeshDrawOp.h"
+#include "src/gpu/text/GrStrikeCache.h"
+#include "src/gpu/text/GrTextBlobCache.h"
+#include "src/image/SkImage_Gpu.h"
 
-#include "GrContextOptions.h"
-#include "GrDrawOpAtlas.h"
-#include "GrDrawingManager.h"
-#include "GrGpuResourceCacheAccess.h"
-#include "GrPipelineBuilder.h"
-#include "GrRenderTargetContextPriv.h"
-#include "GrRenderTargetProxy.h"
-#include "GrResourceCache.h"
-#include "GrSemaphore.h"
-
-#include "SkGr.h"
-#include "SkImage_Gpu.h"
-#include "SkMathPriv.h"
-#include "SkString.h"
-
-#include "text/GrAtlasGlyphCache.h"
-#include "text/GrTextBlobCache.h"
-
-namespace GrTest {
-void SetupAlwaysEvictAtlas(GrContext* context) {
-    // These sizes were selected because they allow each atlas to hold a single plot and will thus
-    // stress the atlas
-    int dim = GrDrawOpAtlas::kGlyphMaxDim;
-    GrDrawOpAtlasConfig configs[3];
-    configs[kA8_GrMaskFormat].fWidth = dim;
-    configs[kA8_GrMaskFormat].fHeight = dim;
-    configs[kA8_GrMaskFormat].fLog2Width = SkNextLog2(dim);
-    configs[kA8_GrMaskFormat].fLog2Height = SkNextLog2(dim);
-    configs[kA8_GrMaskFormat].fPlotWidth = dim;
-    configs[kA8_GrMaskFormat].fPlotHeight = dim;
-
-    configs[kA565_GrMaskFormat].fWidth = dim;
-    configs[kA565_GrMaskFormat].fHeight = dim;
-    configs[kA565_GrMaskFormat].fLog2Width = SkNextLog2(dim);
-    configs[kA565_GrMaskFormat].fLog2Height = SkNextLog2(dim);
-    configs[kA565_GrMaskFormat].fPlotWidth = dim;
-    configs[kA565_GrMaskFormat].fPlotHeight = dim;
-
-    configs[kARGB_GrMaskFormat].fWidth = dim;
-    configs[kARGB_GrMaskFormat].fHeight = dim;
-    configs[kARGB_GrMaskFormat].fLog2Width = SkNextLog2(dim);
-    configs[kARGB_GrMaskFormat].fLog2Height = SkNextLog2(dim);
-    configs[kARGB_GrMaskFormat].fPlotWidth = dim;
-    configs[kARGB_GrMaskFormat].fPlotHeight = dim;
-
-    context->setTextContextAtlasSizes_ForTesting(configs);
-}
-};
-
-bool GrSurfaceProxy::isWrapped_ForTesting() const {
-    return SkToBool(fTarget);
-}
-
-bool GrRenderTargetContext::isWrapped_ForTesting() const {
-    return fRenderTargetProxy->isWrapped_ForTesting();
-}
-
-void GrContext::setTextBlobCacheLimit_ForTesting(size_t bytes) {
-    fTextBlobCache->setBudget(bytes);
-}
-
-void GrContext::setTextContextAtlasSizes_ForTesting(const GrDrawOpAtlasConfig* configs) {
-    fAtlasGlyphCache->setAtlasSizes_ForTesting(configs);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-void GrContext::purgeAllUnlockedResources() {
-    fResourceCache->purgeAllUnlocked();
-}
-
-void GrContext::resetGpuStats() const {
-#if GR_GPU_STATS
-    fGpu->stats()->reset();
-#endif
-}
-
-void GrContext::dumpCacheStats(SkString* out) const {
-#if GR_CACHE_STATS
-    fResourceCache->dumpStats(out);
-#endif
-}
-
-void GrContext::dumpCacheStatsKeyValuePairs(SkTArray<SkString>* keys,
-                                            SkTArray<double>* values) const {
-#if GR_CACHE_STATS
-    fResourceCache->dumpStatsKeyValuePairs(keys, values);
-#endif
-}
-
-void GrContext::printCacheStats() const {
-    SkString out;
-    this->dumpCacheStats(&out);
-    SkDebugf("%s", out.c_str());
-}
-
-void GrContext::dumpGpuStats(SkString* out) const {
-#if GR_GPU_STATS
-    return fGpu->stats()->dump(out);
-#endif
-}
-
-void GrContext::dumpGpuStatsKeyValuePairs(SkTArray<SkString>* keys,
-                                          SkTArray<double>* values) const {
-#if GR_GPU_STATS
-    return fGpu->stats()->dumpKeyValuePairs(keys, values);
-#endif
-}
-
-void GrContext::printGpuStats() const {
-    SkString out;
-    this->dumpGpuStats(&out);
-    SkDebugf("%s", out.c_str());
-}
-
-sk_sp<SkImage> GrContext::getFontAtlasImage_ForTesting(GrMaskFormat format) {
-    GrAtlasGlyphCache* cache = this->getAtlasGlyphCache();
-
-    sk_sp<GrTextureProxy> proxy = cache->getProxy(format);
-    if (!proxy) {
-        return nullptr;
-    }
-
-    SkASSERT(proxy->priv().isExact());
-    sk_sp<SkImage> image(new SkImage_Gpu(this, kNeedNewImageUniqueID, kPremul_SkAlphaType,
-                                         std::move(proxy), nullptr, SkBudgeted::kNo));
-    return image;
-}
-
-#if GR_GPU_STATS
-void GrGpu::Stats::dump(SkString* out) {
-    out->appendf("Render Target Binds: %d\n", fRenderTargetBinds);
-    out->appendf("Shader Compilations: %d\n", fShaderCompilations);
-    out->appendf("Textures Created: %d\n", fTextureCreates);
-    out->appendf("Texture Uploads: %d\n", fTextureUploads);
-    out->appendf("Transfers to Texture: %d\n", fTransfersToTexture);
-    out->appendf("Stencil Buffer Creates: %d\n", fStencilAttachmentCreates);
-    out->appendf("Number of draws: %d\n", fNumDraws);
-}
-
-void GrGpu::Stats::dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) {
-    keys->push_back(SkString("render_target_binds")); values->push_back(fRenderTargetBinds);
-    keys->push_back(SkString("shader_compilations")); values->push_back(fShaderCompilations);
-    keys->push_back(SkString("texture_uploads")); values->push_back(fTextureUploads);
-    keys->push_back(SkString("number_of_draws")); values->push_back(fNumDraws);
-    keys->push_back(SkString("number_of_failed_draws")); values->push_back(fNumFailedDraws);
-}
-
-#endif
-
-#if GR_CACHE_STATS
-void GrResourceCache::getStats(Stats* stats) const {
-    stats->reset();
-
-    stats->fTotal = this->getResourceCount();
-    stats->fNumNonPurgeable = fNonpurgeableResources.count();
-    stats->fNumPurgeable = fPurgeableQueue.count();
-
-    for (int i = 0; i < fNonpurgeableResources.count(); ++i) {
-        stats->update(fNonpurgeableResources[i]);
-    }
-    for (int i = 0; i < fPurgeableQueue.count(); ++i) {
-        stats->update(fPurgeableQueue.at(i));
-    }
-}
-
-void GrResourceCache::dumpStats(SkString* out) const {
-    this->validate();
-
-    Stats stats;
-
-    this->getStats(&stats);
-
-    float countUtilization = (100.f * fBudgetedCount) / fMaxCount;
-    float byteUtilization = (100.f * fBudgetedBytes) / fMaxBytes;
-
-    out->appendf("Budget: %d items %d bytes\n", fMaxCount, (int)fMaxBytes);
-    out->appendf("\t\tEntry Count: current %d"
-                 " (%d budgeted, %d wrapped, %d locked, %d scratch %.2g%% full), high %d\n",
-                 stats.fTotal, fBudgetedCount, stats.fWrapped, stats.fNumNonPurgeable,
-                 stats.fScratch, countUtilization, fHighWaterCount);
-    out->appendf("\t\tEntry Bytes: current %d (budgeted %d, %.2g%% full, %d unbudgeted) high %d\n",
-                 SkToInt(fBytes), SkToInt(fBudgetedBytes), byteUtilization,
-                 SkToInt(stats.fUnbudgetedSize), SkToInt(fHighWaterBytes));
-}
-
-void GrResourceCache::dumpStatsKeyValuePairs(SkTArray<SkString>* keys,
-                                             SkTArray<double>* values) const {
-    this->validate();
-
-    Stats stats;
-    this->getStats(&stats);
-
-    keys->push_back(SkString("gpu_cache_purgable_entries")); values->push_back(stats.fNumPurgeable);
-}
-
-#endif
+#include <algorithm>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -228,192 +59,151 @@ int GrResourceCache::countUniqueKeysWithTag(const char* tag) const {
 #define ASSERT_SINGLE_OWNER \
     SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(fRenderTargetContext->singleOwner());)
 
-uint32_t GrRenderTargetContextPriv::testingOnly_addLegacyMeshDrawOp(
-        GrPaint&& paint,
-        GrAAType aaType,
-        std::unique_ptr<GrLegacyMeshDrawOp> op,
-        const GrUserStencilSettings* uss,
-        bool snapToCenters) {
+
+uint32_t GrRenderTargetContextPriv::testingOnly_getOpsTaskID() {
+    return fRenderTargetContext->getOpsTask()->uniqueID();
+}
+
+void GrRenderTargetContextPriv::testingOnly_addDrawOp(std::unique_ptr<GrDrawOp> op) {
+    this->testingOnly_addDrawOp(GrNoClip(), std::move(op));
+}
+
+void GrRenderTargetContextPriv::testingOnly_addDrawOp(
+        const GrClip& clip,
+        std::unique_ptr<GrDrawOp> op,
+        const std::function<GrRenderTargetContext::WillAddOpFn>& willAddFn) {
     ASSERT_SINGLE_OWNER
-    if (fRenderTargetContext->drawingManager()->wasAbandoned()) {
-        return SK_InvalidUniqueID;
+    if (fRenderTargetContext->fContext->priv().abandoned()) {
+        fRenderTargetContext->fContext->priv().opMemoryPool()->release(std::move(op));
+        return;
     }
-    SkDEBUGCODE(fRenderTargetContext->validate();) GR_AUDIT_TRAIL_AUTO_FRAME(
-            fRenderTargetContext->fAuditTrail, "GrRenderTargetContext::testingOnly_addMeshDrawOp");
-
-    GrPipelineBuilder pipelineBuilder(std::move(paint), aaType);
-    if (uss) {
-        pipelineBuilder.setUserStencil(uss);
-    }
-    pipelineBuilder.setSnapVerticesToPixelCenters(snapToCenters);
-
-    return fRenderTargetContext->addLegacyMeshDrawOp(std::move(pipelineBuilder), GrNoClip(),
-                                                     std::move(op));
+    SkDEBUGCODE(fRenderTargetContext->validate());
+    GR_AUDIT_TRAIL_AUTO_FRAME(fRenderTargetContext->auditTrail(),
+                              "GrRenderTargetContext::testingOnly_addDrawOp");
+    fRenderTargetContext->addDrawOp(clip, std::move(op), willAddFn);
 }
 
 #undef ASSERT_SINGLE_OWNER
 
-///////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
 
-GrRenderTarget::Flags GrRenderTargetProxy::testingOnly_getFlags() const {
-    return fRenderTargetFlags;
+void GrCoverageCountingPathRenderer::testingOnly_drawPathDirectly(const DrawPathArgs& args) {
+    // Call onDrawPath() directly: We want to test paths that might fail onCanDrawPath() simply for
+    // performance reasons, and GrPathRenderer::drawPath() assert that this call returns true.
+    // The test is responsible to not draw any paths that CCPR is not actually capable of.
+    this->onDrawPath(args);
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Code for the mock context. It's built on a mock GrGpu class that does nothing.
-////
-
-#include "GrGpu.h"
-
-class GrPipeline;
-
-class MockCaps : public GrCaps {
-public:
-    explicit MockCaps(const GrContextOptions& options) : INHERITED(options) {}
-    bool isConfigTexturable(GrPixelConfig config) const override { return false; }
-    bool isConfigRenderable(GrPixelConfig config, bool withMSAA) const override { return false; }
-    bool canConfigBeImageStorage(GrPixelConfig) const override { return false; }
-    bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
-                            bool* rectsMustMatch, bool* disallowSubrect) const override {
-        return false;
-    }
-
-private:
-    typedef GrCaps INHERITED;
-};
-
-class MockGpu : public GrGpu {
-public:
-    MockGpu(GrContext* context, const GrContextOptions& options) : INHERITED(context) {
-        fCaps.reset(new MockCaps(options));
-    }
-    ~MockGpu() override {}
-
-    bool onGetReadPixelsInfo(GrSurface* srcSurface, int readWidth, int readHeight, size_t rowBytes,
-                             GrPixelConfig readConfig, DrawPreference*,
-                             ReadPixelTempDrawInfo*) override { return false; }
-
-    bool onGetWritePixelsInfo(GrSurface* dstSurface, int width, int height,
-                              GrPixelConfig srcConfig, DrawPreference*,
-                              WritePixelTempDrawInfo*) override { return false; }
-
-    bool onCopySurface(GrSurface* dst,
-                       GrSurface* src,
-                       const SkIRect& srcRect,
-                       const SkIPoint& dstPoint) override { return false; }
-
-    void onQueryMultisampleSpecs(GrRenderTarget* rt, const GrStencilSettings&,
-                                 int* effectiveSampleCnt, SamplePattern*) override {
-        *effectiveSampleCnt = rt->desc().fSampleCnt;
-    }
-
-    GrGpuCommandBuffer* createCommandBuffer(const GrGpuCommandBuffer::LoadAndStoreInfo&,
-                                            const GrGpuCommandBuffer::LoadAndStoreInfo&) override {
+const GrCCPerFlushResources*
+GrCoverageCountingPathRenderer::testingOnly_getCurrentFlushResources() {
+    SkASSERT(fFlushing);
+    if (fFlushingPaths.empty()) {
         return nullptr;
     }
-
-    void drawDebugWireRect(GrRenderTarget*, const SkIRect&, GrColor) override {}
-
-    GrFence SK_WARN_UNUSED_RESULT insertFence() override { return 0; }
-    bool waitFence(GrFence, uint64_t) override { return true; }
-    void deleteFence(GrFence) const override {}
-    void flush() override {}
-
-    sk_sp<GrSemaphore> SK_WARN_UNUSED_RESULT makeSemaphore() override { return nullptr; }
-    void insertSemaphore(sk_sp<GrSemaphore> semaphore) override {}
-    void waitSemaphore(sk_sp<GrSemaphore> semaphore) override {}
-
-private:
-    void onResetContext(uint32_t resetBits) override {}
-
-    void xferBarrier(GrRenderTarget*, GrXferBarrierType) override {}
-
-    GrTexture* onCreateTexture(const GrSurfaceDesc& desc, SkBudgeted budgeted,
-                               const SkTArray<GrMipLevel>& texels) override {
-        return nullptr;
+    // All pending paths should share the same resources.
+    const GrCCPerFlushResources* resources = fFlushingPaths.front()->fFlushResources.get();
+#ifdef SK_DEBUG
+    for (const auto& flushingPaths : fFlushingPaths) {
+        SkASSERT(flushingPaths->fFlushResources.get() == resources);
     }
-
-    GrTexture* onCreateCompressedTexture(const GrSurfaceDesc& desc, SkBudgeted budgeted,
-                                         const SkTArray<GrMipLevel>& texels) override {
-        return nullptr;
-    }
-
-    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTextureDesc&, GrWrapOwnership) override {
-        return nullptr;
-    }
-
-    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTargetDesc&) override {
-        return nullptr;
-    }
-
-    sk_sp<GrRenderTarget> onWrapBackendTextureAsRenderTarget(const GrBackendTextureDesc&) override {
-        return nullptr;
-    }
-
-    GrBuffer* onCreateBuffer(size_t, GrBufferType, GrAccessPattern, const void*) override {
-        return nullptr;
-    }
-
-    gr_instanced::InstancedRendering* onCreateInstancedRendering() override { return nullptr; }
-
-    bool onReadPixels(GrSurface* surface,
-                      int left, int top, int width, int height,
-                      GrPixelConfig,
-                      void* buffer,
-                      size_t rowBytes) override {
-        return false;
-    }
-
-    bool onWritePixels(GrSurface* surface,
-                       int left, int top, int width, int height,
-                       GrPixelConfig config, const SkTArray<GrMipLevel>& texels) override {
-        return false;
-    }
-
-    bool onTransferPixels(GrSurface* surface,
-                          int left, int top, int width, int height,
-                          GrPixelConfig config, GrBuffer* transferBuffer,
-                          size_t offset, size_t rowBytes) override {
-        return false;
-    }
-
-    void onResolveRenderTarget(GrRenderTarget* target) override { return; }
-
-    GrStencilAttachment* createStencilAttachmentForRenderTarget(const GrRenderTarget*,
-                                                                int width,
-                                                                int height) override {
-        return nullptr;
-    }
-
-    void clearStencil(GrRenderTarget* target) override  {}
-
-    GrBackendObject createTestingOnlyBackendTexture(void* pixels, int w, int h,
-                                                    GrPixelConfig config, bool isRT) override {
-        return 0;
-    }
-    bool isTestingOnlyBackendTexture(GrBackendObject ) const override { return false; }
-    void deleteTestingOnlyBackendTexture(GrBackendObject, bool abandonTexture) override {}
-
-    typedef GrGpu INHERITED;
-};
-
-GrContext* GrContext::CreateMockContext() {
-    GrContext* context = new GrContext;
-
-    context->initMockContext();
-    return context;
+#endif
+    return resources;
 }
 
-void GrContext::initMockContext() {
-    GrContextOptions options;
-    options.fBufferMapThreshold = 0;
-    SkASSERT(nullptr == fGpu);
-    fGpu = new MockGpu(this, options);
-    SkASSERT(fGpu);
-    this->initCommon(options);
+const GrCCPathCache* GrCoverageCountingPathRenderer::testingOnly_getPathCache() const {
+    return fPathCache.get();
+}
 
-    // We delete these because we want to test the cache starting with zero resources. Also, none of
-    // these objects are required for any of tests that use this context. TODO: make stop allocating
-    // resources in the buffer pools.
-    fDrawingManager->abandon();
+const GrTexture* GrCCPerFlushResources::testingOnly_frontCopyAtlasTexture() const {
+    if (fCopyAtlasStack.empty()) {
+        return nullptr;
+    }
+    const GrTextureProxy* proxy = fCopyAtlasStack.front().textureProxy();
+    return (proxy) ? proxy->peekTexture() : nullptr;
+}
+
+const GrTexture* GrCCPerFlushResources::testingOnly_frontRenderedAtlasTexture() const {
+    if (fRenderedAtlasStack.empty()) {
+        return nullptr;
+    }
+    const GrTextureProxy* proxy = fRenderedAtlasStack.front().textureProxy();
+    return (proxy) ? proxy->peekTexture() : nullptr;
+}
+
+const SkTHashTable<GrCCPathCache::HashNode, const GrCCPathCache::Key&>&
+GrCCPathCache::testingOnly_getHashTable() const {
+    return fHashTable;
+}
+
+const SkTInternalLList<GrCCPathCacheEntry>& GrCCPathCache::testingOnly_getLRU() const {
+    return fLRU;
+}
+
+int GrCCPathCacheEntry::testingOnly_peekOnFlushRefCnt() const { return fOnFlushRefCnt; }
+
+int GrCCCachedAtlas::testingOnly_peekOnFlushRefCnt() const { return fOnFlushRefCnt; }
+
+//////////////////////////////////////////////////////////////////////////////
+
+#define DRAW_OP_TEST_EXTERN(Op) \
+    extern std::unique_ptr<GrDrawOp> Op##__Test(GrPaint&&, SkRandom*, \
+                                                GrRecordingContext*, int numSamples)
+#define DRAW_OP_TEST_ENTRY(Op) Op##__Test
+
+DRAW_OP_TEST_EXTERN(AAConvexPathOp);
+DRAW_OP_TEST_EXTERN(AAFlatteningConvexPathOp);
+DRAW_OP_TEST_EXTERN(AAHairlineOp);
+DRAW_OP_TEST_EXTERN(AAStrokeRectOp);
+DRAW_OP_TEST_EXTERN(CircleOp);
+DRAW_OP_TEST_EXTERN(DashOp);
+DRAW_OP_TEST_EXTERN(DefaultPathOp);
+DRAW_OP_TEST_EXTERN(DIEllipseOp);
+DRAW_OP_TEST_EXTERN(EllipseOp);
+DRAW_OP_TEST_EXTERN(FillRectOp);
+DRAW_OP_TEST_EXTERN(GrAtlasTextOp);
+DRAW_OP_TEST_EXTERN(DrawAtlasOp);
+DRAW_OP_TEST_EXTERN(DrawVerticesOp);
+DRAW_OP_TEST_EXTERN(NonAALatticeOp);
+DRAW_OP_TEST_EXTERN(NonAAStrokeRectOp);
+DRAW_OP_TEST_EXTERN(ShadowRRectOp);
+DRAW_OP_TEST_EXTERN(SmallPathOp);
+DRAW_OP_TEST_EXTERN(RegionOp);
+DRAW_OP_TEST_EXTERN(RRectOp);
+DRAW_OP_TEST_EXTERN(TesselatingPathOp);
+DRAW_OP_TEST_EXTERN(TextureOp);
+
+void GrDrawRandomOp(SkRandom* random, GrRenderTargetContext* renderTargetContext, GrPaint&& paint) {
+    auto context = renderTargetContext->surfPriv().getContext();
+    using MakeDrawOpFn = std::unique_ptr<GrDrawOp>(GrPaint&&, SkRandom*,
+                                                   GrRecordingContext*, int numSamples);
+    static constexpr MakeDrawOpFn* gFactories[] = {
+            DRAW_OP_TEST_ENTRY(AAConvexPathOp),
+            DRAW_OP_TEST_ENTRY(AAFlatteningConvexPathOp),
+            DRAW_OP_TEST_ENTRY(AAHairlineOp),
+            DRAW_OP_TEST_ENTRY(AAStrokeRectOp),
+            DRAW_OP_TEST_ENTRY(CircleOp),
+            DRAW_OP_TEST_ENTRY(DashOp),
+            DRAW_OP_TEST_ENTRY(DefaultPathOp),
+            DRAW_OP_TEST_ENTRY(DIEllipseOp),
+            DRAW_OP_TEST_ENTRY(EllipseOp),
+            DRAW_OP_TEST_ENTRY(FillRectOp),
+            DRAW_OP_TEST_ENTRY(GrAtlasTextOp),
+            DRAW_OP_TEST_ENTRY(DrawAtlasOp),
+            DRAW_OP_TEST_ENTRY(DrawVerticesOp),
+            DRAW_OP_TEST_ENTRY(NonAALatticeOp),
+            DRAW_OP_TEST_ENTRY(NonAAStrokeRectOp),
+            DRAW_OP_TEST_ENTRY(ShadowRRectOp),
+            DRAW_OP_TEST_ENTRY(SmallPathOp),
+            DRAW_OP_TEST_ENTRY(RegionOp),
+            DRAW_OP_TEST_ENTRY(RRectOp),
+            DRAW_OP_TEST_ENTRY(TesselatingPathOp),
+            DRAW_OP_TEST_ENTRY(TextureOp),
+    };
+
+    static constexpr size_t kTotal = SK_ARRAY_COUNT(gFactories);
+    uint32_t index = random->nextULessThan(static_cast<uint32_t>(kTotal));
+    auto op = gFactories[index](
+            std::move(paint), random, context, renderTargetContext->numSamples());
+    SkASSERT(op);
+    renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
 }

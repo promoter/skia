@@ -8,8 +8,8 @@
 #ifndef SKSL_STATEMENT
 #define SKSL_STATEMENT
 
-#include "SkSLIRNode.h"
-#include "SkSLType.h"
+#include "src/sksl/ir/SkSLIRNode.h"
+#include "src/sksl/ir/SkSLType.h"
 
 namespace SkSL {
 
@@ -25,16 +25,25 @@ struct Statement : public IRNode {
         kDo_Kind,
         kExpression_Kind,
         kFor_Kind,
+        kGroup_Kind,
         kIf_Kind,
+        kNop_Kind,
         kReturn_Kind,
         kSwitch_Kind,
+        kVarDeclaration_Kind,
         kVarDeclarations_Kind,
         kWhile_Kind
     };
 
-    Statement(Position position, Kind kind)
-    : INHERITED(position)
+    Statement(int offset, Kind kind)
+    : INHERITED(offset)
     , fKind(kind) {}
+
+    virtual bool isEmpty() const {
+        return false;
+    }
+
+    virtual std::unique_ptr<Statement> clone() const = 0;
 
     const Kind fKind;
 

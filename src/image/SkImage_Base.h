@@ -8,19 +8,23 @@
 #ifndef SkImage_Base_DEFINED
 #define SkImage_Base_DEFINED
 
-#include "SkAtomics.h"
-#include "SkImage.h"
-#include "SkSurface.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkSurface.h"
+#include <atomic>
 
 #if SK_SUPPORT_GPU
-    #include "GrTexture.h"
-    #include "GrTextureProxy.h"
+#include "include/private/SkTDArray.h"
+#include "src/gpu/GrTextureProxy.h"
+
+class GrRecordingContext;
+class GrTexture;
 #endif
 
 #include <new>
 
-class GrSamplerParams;
-class SkImageCacherator;
+class GrSamplerState;
+class SkCachedData;
+struct SkYUVASizeInfo;
 
 enum {
     kNeedNewImageUniqueID = 0
@@ -28,72 +32,83 @@ enum {
 
 class SkImage_Base : public SkImage {
 public:
-    SkImage_Base(int width, int height, uint32_t uniqueID);
     virtual ~SkImage_Base();
 
-    // User: returns image info for this SkImage.
-    // Implementors: if you can not return the value, return an invalid ImageInfo with w=0 & h=0
-    // & unknown color space.
-    virtual SkImageInfo onImageInfo() const = 0;
-    virtual SkAlphaType onAlphaType() const = 0;
+    virtual SkIRect onGetSubset() const {
+        return { 0, 0, this->width(), this->height() };
+    }
 
     virtual bool onPeekPixels(SkPixmap*) const { return false; }
 
     virtual const SkBitmap* onPeekBitmap() const { return nullptr; }
 
-    virtual bool onReadYUV8Planes(const SkISize sizes[3], void* const planes[3],
-                                  const size_t rowBytes[3], SkYUVColorSpace colorSpace) const;
-
     virtual bool onReadPixels(const SkImageInfo& dstInfo, void* dstPixels, size_t dstRowBytes,
                               int srcX, int srcY, CachingHint) const = 0;
 
-    // MDB TODO: this entry point needs to go away
-    virtual GrTexture* peekTexture() const { return nullptr; }
+    virtual GrContext* context() const { return nullptr; }
+
 #if SK_SUPPORT_GPU
+    virtual GrSemaphoresSubmitted onFlush(GrContext* context, const GrFlushInfo&) {
+        return GrSemaphoresSubmitted::kNo;
+    }
+
+    // Return the proxy if this image is backed by a single proxy. For YUVA images, this
+    // will return nullptr unless the YUVA planes have been converted to RGBA in which case
+    // that single backing proxy will be returned.
     virtual GrTextureProxy* peekProxy() const { return nullptr; }
-    virtual sk_sp<GrTextureProxy> asTextureProxyRef() const { return nullptr; }
-    virtual sk_sp<GrTextureProxy> asTextureProxyRef(GrContext*, const GrSamplerParams&,
-                                                    SkColorSpace*, sk_sp<SkColorSpace>*,
+    virtual sk_sp<GrTextureProxy> asTextureProxyRef(GrRecordingContext*) const { return nullptr; }
+    virtual sk_sp<GrTextureProxy> asTextureProxyRef(GrRecordingContext*, const GrSamplerState&,
                                                     SkScalar scaleAdjust[2]) const = 0;
-    virtual sk_sp<GrTextureProxy> refPinnedTextureProxy(uint32_t* uniqueID) const {
+    virtual sk_sp<GrTextureProxy> refPinnedTextureProxy(GrRecordingContext*,
+                                                        uint32_t* uniqueID) const {
         return nullptr;
     }
-    virtual GrBackendObject onGetTextureHandle(bool flushPendingGrContextIO,
-                                               GrSurfaceOrigin* origin) const {
-        return 0;
-    }
+    virtual bool isYUVA() const { return false; }
     virtual GrTexture* onGetTexture() const { return nullptr; }
 #endif
-    virtual SkImageCacherator* peekCacherator() const { return nullptr; }
+    virtual GrBackendTexture onGetBackendTexture(bool flushPendingGrContextIO,
+                                                 GrSurfaceOrigin* origin) const;
 
     // return a read-only copy of the pixels. We promise to not modify them,
     // but only inspect them (or encode them).
-    virtual bool getROPixels(SkBitmap*, SkColorSpace* dstColorSpace,
-                             CachingHint = kAllow_CachingHint) const = 0;
+    virtual bool getROPixels(SkBitmap*, CachingHint = kAllow_CachingHint) const = 0;
 
-    virtual sk_sp<SkImage> onMakeSubset(const SkIRect&) const = 0;
+    virtual sk_sp<SkImage> onMakeSubset(GrRecordingContext*, const SkIRect&) const = 0;
 
-    // If a ctx is specified, then only gpu-specific formats are requested.
-    virtual SkData* onRefEncoded(GrContext*) const { return nullptr; }
+    virtual sk_sp<SkCachedData> getPlanes(SkYUVASizeInfo*, SkYUVAIndex[4],
+                                          SkYUVColorSpace*, const void* planes[4]);
+    virtual sk_sp<SkData> onRefEncoded() const { return nullptr; }
 
-    virtual bool onAsLegacyBitmap(SkBitmap*, LegacyBitmapMode) const;
+    virtual bool onAsLegacyBitmap(SkBitmap*) const;
 
+    // True for picture-backed and codec-backed
     virtual bool onIsLazyGenerated() const { return false; }
+
+    // True for images instantiated in GPU memory
+    virtual bool onIsTextureBacked() const { return false; }
 
     // Call when this image is part of the key to a resourcecache entry. This allows the cache
     // to know automatically those entries can be purged when this SkImage deleted.
-    void notifyAddedToCache() const {
-        fAddedToCache.store(true);
+    virtual void notifyAddedToRasterCache() const {
+        fAddedToRasterCache.store(true);
     }
+
+    virtual bool onIsValid(GrContext*) const = 0;
 
     virtual bool onPinAsTexture(GrContext*) const { return false; }
     virtual void onUnpinAsTexture(GrContext*) const {}
 
-    virtual sk_sp<SkImage> onMakeColorSpace(sk_sp<SkColorSpace>) const = 0;
+    virtual sk_sp<SkImage> onMakeColorTypeAndColorSpace(GrRecordingContext*,
+                                                        SkColorType, sk_sp<SkColorSpace>) const = 0;
+
+    virtual sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const = 0;
+
+protected:
+    SkImage_Base(const SkImageInfo& info, uint32_t uniqueID);
 
 private:
     // Set true by caches when they cache content that's derived from the current pixels.
-    mutable SkAtomic<bool> fAddedToCache;
+    mutable std::atomic<bool> fAddedToRasterCache;
 
     typedef SkImage INHERITED;
 };
